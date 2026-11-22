@@ -1,0 +1,41 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 72067938d90646e488666d7254db1c87, type: 3}
+  m_Name: Character_SteamMechanic
+  m_EditorClassIdentifier: 
+  persona: 1
+  displayName: "蒸汽机械师"
+  positioning: "近身最高爆发，打完拉开"
+  traitName: "过载损耗"
+  traitDescription: ""
+  maxHealth: 110
+  defense: 82
+  damageReduction: 0.164
+  speed: 108
+  moveSpeedCellsPerSecond: 3.24
+  jumpHeightCells: 2
+  attackIntervalSeconds: 0.8
+  basicAttack:
+    attackName: "蒸汽铳（散弹）"
+    damage: 2
+    windupSeconds: 0.2
+    rangeCells: 5
+    widthCells: 0
+    projectileSpeed: 6
+    projectileCount: 4
+    spreadDegrees: 28
+    returns: 0
+  dodgeDistanceCells: 3
+  dodgeDurationSeconds: 0.25
+  dodgeCooldownSeconds: 3
+  dodgeGrantsInvulnerability: 1
+  designNotes: "蒸汽铳为 28° 扇形、4 枚弹片，每枚 2 点伤害，弹丸均匀分布在 ±14° 内。闪避三项数值文档未给，为占位默认值。"

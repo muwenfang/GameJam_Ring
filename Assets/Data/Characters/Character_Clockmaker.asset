@@ -1,0 +1,41 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 72067938d90646e488666d7254db1c87, type: 3}
+  m_Name: Character_Clockmaker
+  m_EditorClassIdentifier: 
+  persona: 4
+  displayName: "钟表师"
+  positioning: "时间系：回溯 / 减速 / 致死撤销"
+  traitName: "逆时"
+  traitDescription: ""
+  maxHealth: 96
+  defense: 96
+  damageReduction: 0.192
+  speed: 108
+  moveSpeedCellsPerSecond: 3.24
+  jumpHeightCells: 2
+  attackIntervalSeconds: 0.8
+  basicAttack:
+    attackName: "时钟飞刃"
+    damage: 4
+    windupSeconds: 0.2
+    rangeCells: 5
+    widthCells: 1
+    projectileSpeed: 8
+    projectileCount: 1
+    spreadDegrees: 0
+    returns: 1
+  dodgeDistanceCells: 3
+  dodgeDurationSeconds: 0.25
+  dodgeCooldownSeconds: 3
+  dodgeGrantsInvulnerability: 1
+  designNotes: "时钟飞刃去程/回程各 4 点；折返前不能再次攻击。「逆时」致死回滚冷却 30 秒属于特质逻辑。闪避三项数值文档未给，为占位默认值。"

@@ -1,0 +1,41 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 72067938d90646e488666d7254db1c87, type: 3}
+  m_Name: Character_Ranger
+  m_EditorClassIdentifier: 
+  persona: 3
+  displayName: "精灵游侠"
+  positioning: "射程 8 格最远，脆皮"
+  traitName: "精灵之目"
+  traitDescription: ""
+  maxHealth: 75
+  defense: 75
+  damageReduction: 0.125
+  speed: 110
+  moveSpeedCellsPerSecond: 3.3
+  jumpHeightCells: 2
+  attackIntervalSeconds: 0.6
+  basicAttack:
+    attackName: "游侠短弓"
+    damage: 3
+    windupSeconds: 0.15
+    rangeCells: 8
+    widthCells: 1
+    projectileSpeed: 10
+    projectileCount: 1
+    spreadDegrees: 0
+    returns: 0
+  dodgeDistanceCells: 3
+  dodgeDurationSeconds: 0.25
+  dodgeCooldownSeconds: 3
+  dodgeGrantsInvulnerability: 1
+  designNotes: "⚠️ 文档标注：防御 75 按 防御/500 应为 15%，表里写 12.5%（即除以 600）。此处保留文档值，校验工具会提示这条偏差。闪避三项数值文档未给，为占位默认值。"

@@ -1,0 +1,51 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a2843a8ef49649109ed756ba19b2d43f, type: 3}
+  m_Name: InputSettings
+  m_EditorClassIdentifier: 
+  defaultBindings:
+  - Action: 0
+    Primary: 23
+    Alternate: 50
+  - Action: 1
+    Primary: 19
+    Alternate: 51
+  - Action: 2
+    Primary: 1
+    Alternate: 52
+  - Action: 3
+    Primary: 4
+    Alternate: 53
+  - Action: 4
+    Primary: 59
+    Alternate: 0
+  - Action: 5
+    Primary: 60
+    Alternate: 0
+  - Action: 6
+    Primary: 37
+    Alternate: 0
+  - Action: 7
+    Primary: 28
+    Alternate: 0
+  - Action: 8
+    Primary: 29
+    Alternate: 0
+  - Action: 9
+    Primary: 30
+    Alternate: 0
+  - Action: 10
+    Primary: 38
+    Alternate: 0
+  allowRuntimeRebinding: 1
+  persistToPlayerPrefs: 1
+  designNotes: "文档键位表写「鼠标左键 / ?：平A / 闪避」，斜杠后缺失（正文指向 §9-Q4），因此本工程默认 平A=鼠标左键、闪避=鼠标右键，两者都可在运行时改键。空格=跳跃（2 格），1/2/3=本我/自我/超我技能，Esc=暂停。方向键作为 WASD 的备用键。"

@@ -1,0 +1,41 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 72067938d90646e488666d7254db1c87, type: 3}
+  m_Name: Character_Spartan
+  m_EditorClassIdentifier: 
+  persona: 2
+  displayName: "斯巴达战士"
+  positioning: "狂战士 / 举盾坦"
+  traitName: "斯巴达韧性"
+  traitDescription: ""
+  maxHealth: 116
+  defense: 120
+  damageReduction: 0.24
+  speed: 72
+  moveSpeedCellsPerSecond: 2.16
+  jumpHeightCells: 2
+  attackIntervalSeconds: 0.9
+  basicAttack:
+    attackName: "长矛突刺"
+    damage: 5
+    windupSeconds: 0.2
+    rangeCells: 2
+    widthCells: 1
+    projectileSpeed: 0
+    projectileCount: 1
+    spreadDegrees: 0
+    returns: 0
+  dodgeDistanceCells: 3
+  dodgeDurationSeconds: 0.25
+  dodgeCooldownSeconds: 3
+  dodgeGrantsInvulnerability: 1
+  designNotes: "特质「半举盾」的额外防御与回血属于特质逻辑，不在基础数值内。闪避三项数值文档未给，为占位默认值。"
