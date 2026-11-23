@@ -162,17 +162,18 @@ namespace Ring.Flow
         {
             ResolveDependencies();
 
-            for (int i = 0; i < spawner.Instances.Count; i++)
-            {
-                CharacterInstance character = spawner.Instances[i];
-                if (character != null)
-                {
-                    character.Died -= HandleCharacterDied;
-                }
-            }
-
+            // spawner 可能压根没有（场景里没挂），必须先判空再摸 Instances，否则菜单一按就空引用。
             if (spawner != null)
             {
+                for (int i = 0; i < spawner.Instances.Count; i++)
+                {
+                    CharacterInstance character = spawner.Instances[i];
+                    if (character != null)
+                    {
+                        character.Died -= HandleCharacterDied;
+                    }
+                }
+
                 spawner.DespawnAll();
             }
 
@@ -273,6 +274,12 @@ namespace Ring.Flow
 
         private void HandleBellRung(BellResult result)
         {
+            // 钟声刚换过牌：把新的特质/技能同步进每个人的五个能力槽，再判胜负。
+            if (spawner != null)
+            {
+                spawner.RefreshLoadouts();
+            }
+
             EvaluateOutcome();
         }
 

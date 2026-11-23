@@ -123,6 +123,7 @@ namespace Ring.Flow
                 if (attachPlayerMotor && Player.GetComponent<PlayerMotor>() == null)
                 {
                     Player.gameObject.AddComponent<PlayerMotor>();
+                    Player.gameObject.AddComponent<AbilityCaster>();
                 }
                 Debug.LogWarning("[生成] 总表里没有 " + playerPersona.ToChineseName() + "，已把 "
                     + Player.DisplayName + " 设为玩家。", this);
@@ -136,6 +137,7 @@ namespace Ring.Flow
 
             // 文档 [005]：开局随机分配特质、技能与位置。
             bell.Runtime.DealInitialCards();
+            RefreshLoadouts();
 
             if (logSpawn)
             {
@@ -168,6 +170,21 @@ namespace Ring.Flow
             Player = null;
         }
 
+        /// <summary>
+        /// 每次钟声换完牌之后，把每个人手上新的特质与技能同步进五个能力槽。
+        /// 拆卡混装时这样做是唯一正确的同步点：钟声只改 BellParticipant 的持有列表。
+        /// </summary>
+        public void RefreshLoadouts()
+        {
+            for (int i = 0; i < instances.Count; i++)
+            {
+                if (instances[i] != null)
+                {
+                    instances[i].RefreshLoadout();
+                }
+            }
+        }
+
         private CharacterInstance CreateInstance(int index, CharacterBaseStats stats, int total, bool isPlayer)
         {
             var go = new GameObject("角色_" + stats.DisplayName);
@@ -187,6 +204,7 @@ namespace Ring.Flow
             if (isPlayer && attachPlayerMotor)
             {
                 go.AddComponent<PlayerMotor>();
+                go.AddComponent<AbilityCaster>();
             }
 
             return instance;

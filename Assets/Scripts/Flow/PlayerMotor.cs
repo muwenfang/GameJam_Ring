@@ -1,3 +1,4 @@
+using Ring.Abilities;
 using Ring.Inputs;
 using UnityEngine;
 
@@ -51,7 +52,19 @@ namespace Ring.Flow
                 return;
             }
 
-            float speed = instance.Stats != null ? instance.Stats.MoveSpeedCellsPerSecond * unitsPerCell : 3f;
+            DerivedAbilityStats derived = instance.Derived;
+            if (derived.Immobile)
+            {
+                // 紧急排气、凝神定身之类的「施法期不能动」。
+                return;
+            }
+
+            // 移速已经含「过载损耗」的按生命比例、风之优雅的叠层加成、高性能模式等限时增益。
+            float speed = instance.MoveSpeedCellsPerSecond * unitsPerCell;
+            if (speed <= 0f)
+            {
+                speed = 3f;
+            }
             Vector3 next = transform.position + (Vector3)(axis * (speed * Time.deltaTime));
 
             if (clampToArena)

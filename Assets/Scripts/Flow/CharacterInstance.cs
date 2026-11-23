@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using Ring.Abilities;
 using Ring.Bells;
 using Ring.Characters;
 using UnityEngine;
@@ -28,6 +30,9 @@ namespace Ring.Flow
 
         private bool deathRaised;
 
+        private AbilityLoadout loadout;
+        private AbilityRuntime abilities;
+
         /// <summary>死亡事件（只触发一次）。</summary>
         public event Action<CharacterInstance> Died;
 
@@ -49,6 +54,47 @@ namespace Ring.Flow
 
         /// <summary>钟声系统的参与者视图（手上有什么牌都在这里）。</summary>
         public BellParticipant Participant { get; private set; }
+
+        /// <summary>
+        /// 五个能力槽：特质 / 普攻 / 本我 / 自我 / 超我。
+        /// 钟声只管特质与三张技能卡，普攻卡在生成时直接给，但三者都落到这一张装备表里。
+        /// </summary>
+        public AbilityLoadout Loadout
+        {
+            get { return loadout; }
+        }
+
+        /// <summary>能力运行时：冷却、叠层、限时增益、生命快照。</summary>
+        public AbilityRuntime Abilities
+        {
+            get { return abilities; }
+        }
+
+        /// <summary>当前派生战斗数值（已含特质被动与限时增益）。</summary>
+        public DerivedAbilityStats Derived
+        {
+            get { return abilities != null ? abilities.ComputeDerived() : default(DerivedAbilityStats); }
+        }
+
+        /// <summary>移动速度（格/秒），已含「过载损耗」「风之优雅」等移速修正。</summary>
+        public float MoveSpeedCellsPerSecond
+        {
+            get
+            {
+                if (abilities != null)
+                {
+                    return abilities.ComputeDerived().MoveSpeedCellsPerSecond;
+                }
+
+                return Stats != null ? Stats.MoveSpeedCellsPerSecond : 0f;
+            }
+        }
+
+        /// <summary>是否处于无敌（绝对防御等）。</summary>
+        public bool IsInvulnerable
+        {
+            get { return abilities != null && abilities.ComputeDerived().Invulnerable; }
+        }
 
         public PersonaId Persona
         {
@@ -107,10 +153,42 @@ namespace Ring.Flow
             gameObject.name = (player ? "玩家_" : "人机_") + displayName;
             Participant = new BellParticipant(id, displayName);
 
+            loadout = new AbilityLoadout();
+            loadout.TryAdd(new AbilityCard(persona, AbilitySlot.BasicAttack), out _);
+            abilities = new AbilityRuntime(loadout, new CharacterStatAdapter(stats));
+            abilities.SetHealth(currentHealth, maxHealth);
+            RefreshLoadout();
+
             BuildVisual();
         }
 
-        /// <summary>按防御减伤后扣血；扣到 0 时触发一次 Died。</summary>
+        private void Update()
+        {
+            if (abilities == null)
+            {
+                return;
+            }
+
+            abilities.Tick(Time.deltaTime);
+            abilities.NotifyHealth(currentHealth);
+
+            if (IsDead)
+            {
+                return;
+            }
+
+            // 斯巴达韧性、沉腰调息这类持续回血由运行时累计，这里统一落到身上。
+            float regen = abilities.ConsumeRegen();
+            if (regen > 0f)
+            {
+                HealSilently(regen);
+            }
+        }
+
+        /// <summary>
+        /// 受击入口：先看无敌（绝对防御等），再按派生减伤与受伤倍率结算，
+        /// 致死一击会先问「逆时」能不能回滚；真正扣到 0 才触发 Died。
+        /// </summary>
         public void TakeDamage(float rawDamage)
         {
             if (IsDead || rawDamage <= 0f)
@@ -118,14 +196,152 @@ namespace Ring.Flow
                 return;
             }
 
-            float actual = Stats != null ? Stats.MitigateDamage(rawDamage) : rawDamage;
+            if (abilities == null)
+            {
+                float plain = Stats != null ? Stats.MitigateDamage(rawDamage) : rawDamage;
+                currentHealth = Mathf.Max(0f, currentHealth - plain);
+                RaiseHealthChanged();
+                if (currentHealth <= 0f)
+                {
+                    RaiseDied();
+                }
+
+                return;
+            }
+
+            DerivedAbilityStats derived = abilities.ComputeDerived();
+            if (derived.Invulnerable)
+            {
+                return;
+            }
+
+            float actual = CharacterBalance.ApplyReduction(rawDamage, derived.DamageReduction)
+                           * Mathf.Max(0f, derived.DamageTakenMultiplier);
+            if (actual <= 0f)
+            {
+                return;
+            }
+
+            if (currentHealth - actual <= 0f)
+            {
+                float restored;
+                if (abilities.TryConsumeLethalHit(out restored))
+                {
+                    // 「逆时」把生命倒回 3 秒前，这一击不算死亡。
+                    ApplyRestoredHealth(restored);
+                    return;
+                }
+            }
+
             currentHealth = Mathf.Max(0f, currentHealth - actual);
+            abilities.NotifyDamageTaken(actual);
+            abilities.NotifyHealth(currentHealth);
             RaiseHealthChanged();
 
             if (currentHealth <= 0f)
             {
                 RaiseDied();
             }
+        }
+
+        /// <summary>自己造成一次伤害后调用（剑意叠层等）。</summary>
+        public void NotifyDamageDealt()
+        {
+            if (abilities != null)
+            {
+                abilities.NotifyDamageDealt();
+            }
+        }
+
+        /// <summary>
+        /// 平A 命中一个目标：结算风之优雅 / 重箭、力量眩晕计数、过载损耗蓄势击退。
+        /// 返回的 BonusDamage / KnockbackCells / Stunned 由战斗层消费。
+        /// </summary>
+        public BasicAttackHitResult NotifyBasicAttackHit(int targetId)
+        {
+            return abilities != null ? abilities.NotifyBasicAttackHit(targetId) : default(BasicAttackHitResult);
+        }
+
+        /// <summary>
+        /// 钟声换牌之后把「手上持有的特质与技能卡」同步进五个能力槽。
+        /// 普攻槽不受影响，会在同步里保留下来。
+        /// </summary>
+        public void RefreshLoadout()
+        {
+            if (loadout == null || Participant == null)
+            {
+                return;
+            }
+
+            List<AbilityCard> rejected;
+            loadout.SyncFromBellCards(Participant.Traits, Participant.Skills, out rejected);
+
+            if (rejected != null && rejected.Count > 0)
+            {
+                var builder = new System.Text.StringBuilder();
+                for (int i = 0; i < rejected.Count; i++)
+                {
+                    if (i > 0)
+                    {
+                        builder.Append('、');
+                    }
+
+                    builder.Append(rejected[i].ToDisplayName());
+                }
+
+                Debug.LogWarning("[" + DisplayName + "] 有 " + rejected.Count + " 张卡放不进能力槽：" + builder, this);
+            }
+
+            if (abilities != null)
+            {
+                abilities.NotifyHealth(currentHealth);
+            }
+        }
+
+        /// <summary>发放本命普攻卡（普攻不属于钟声卡池，生成时直接给）。</summary>
+        public void GrantBasicAttack()
+        {
+            if (loadout == null)
+            {
+                return;
+            }
+
+            loadout.TryAdd(new AbilityCard(persona, AbilitySlot.BasicAttack), out _);
+        }
+
+        private void ApplyRestoredHealth(float restored)
+        {
+            currentHealth = Mathf.Clamp(restored, 1f, maxHealth);
+            deathRaised = false;
+            if (Participant != null)
+            {
+                Participant.IsAlive = true;
+            }
+
+            if (abilities != null)
+            {
+                abilities.NotifyHealth(currentHealth);
+            }
+
+            RaiseHealthChanged();
+        }
+
+        private void HealSilently(float amount)
+        {
+            if (IsDead || amount <= 0f)
+            {
+                return;
+            }
+
+            float next = Mathf.Min(maxHealth, currentHealth + amount);
+            if (Mathf.Abs(next - currentHealth) < 0.01f)
+            {
+                currentHealth = next;
+                return;
+            }
+
+            currentHealth = next;
+            RaiseHealthChanged();
         }
 
         public void Heal(float amount)
@@ -178,6 +394,13 @@ namespace Ring.Flow
                 Participant.IsInPlay = true;
             }
 
+            if (abilities != null)
+            {
+                // 满血重新分配：冷却、增益、叠层、计数与生命快照一起清掉。
+                abilities.Reset(maxHealth, maxHealth);
+            }
+
+            RefreshLoadout();
             RaiseHealthChanged();
         }
 
