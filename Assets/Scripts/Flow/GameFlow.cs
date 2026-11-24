@@ -1,5 +1,6 @@
 using System;
 using Ring.Bells;
+using Ring.Maps;
 using UnityEngine;
 
 namespace Ring.Flow
@@ -33,6 +34,15 @@ namespace Ring.Flow
         [SerializeField]
         [Tooltip("是否把流程切换打印到 Console。")]
         private bool logFlow = true;
+
+        [Header("本局地图")]
+        [SerializeField]
+        [Tooltip("每局随机选一张地图（共 6 张）；关掉则固定用 fixedMap，方便调试单张地图。")]
+        private bool randomizeMap = true;
+
+        [SerializeField]
+        [Tooltip("randomizeMap 关闭时使用的固定地图。")]
+        private BattleMapId fixedMap = BattleMapId.Map01;
 
         /// <summary>场景里的流程控制器。</summary>
         public static GameFlow Instance
@@ -73,6 +83,15 @@ namespace Ring.Flow
 
         /// <summary>本局结束（胜利 / 失败）。</summary>
         public event Action<MatchState> MatchFinished;
+
+        /// <summary>
+        /// 本局随机到的地图。主菜单状态下不保证有意义（保留的是上一局的值）。
+        /// 地图实体还没做，UI / 场地逻辑拿到这个编号后自行决定怎么展示。
+        /// </summary>
+        public BattleMapId CurrentMap { get; private set; }
+
+        /// <summary>开局选定本局地图后触发。UI 订阅它来切换地图场景。</summary>
+        public event Action<BattleMapId> MapChanged;
 
         private void Awake()
         {
@@ -125,9 +144,27 @@ namespace Ring.Flow
         {
             ResolveDependencies();
 
+            // 先定本局地图再调 Flow.StartMatch()：StateChanged(MainMenu→Loading) 触发时，
+            // UI 读到的 CurrentMap 就已经是这一局的值，不会闪一帧上一局的地图。
+            // 随机源留在 Unity 侧，纯映射逻辑在 BattleMaps（零 UnityEngine，可离线回归）。
+            BattleMapId selected = randomizeMap
+                ? BattleMaps.Pick(UnityEngine.Random.Range(0, BattleMaps.Count))
+                : BattleMaps.ClampToValid(fixedMap);
+            CurrentMap = selected;
+
             if (!Flow.StartMatch())
             {
                 return false;
+            }
+
+            if (logFlow)
+            {
+                Debug.Log("[流程] 本局地图：" + selected.ToDisplayName(), this);
+            }
+
+            if (MapChanged != null)
+            {
+                MapChanged(selected);
             }
 
             if (bellSystem == null || spawner == null)

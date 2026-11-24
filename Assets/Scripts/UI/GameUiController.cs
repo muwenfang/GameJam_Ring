@@ -5,6 +5,7 @@ using Ring.Bells;
 using Ring.Characters;
 using Ring.Flow;
 using Ring.Inputs;
+using Ring.Maps;
 using UnityEngine;
 using UnityEngine.UI;
 #if UNITY_EDITOR
@@ -22,14 +23,15 @@ namespace Ring.UI
     /// 不换 Scene 的理由：GameFlow / BellSystem / GameInput 与主菜单 Canvas 都挂在 SampleScene 的根物体上，
     /// 换场景就得把它们搬进 DontDestroyOnLoad，还要单独保住 SettingPanel —— 属于自找麻烦。
     ///
-    /// 四个界面：
-    /// - 主菜单（开始游戏 / 设置 / 退出游戏）
-    /// - 收集人设 HUD（阶段、下一次钟声倒计时、自己的牌与人）
-    /// - 淘汰赛 HUD（同一个 HUD，只换提示文案）
-    /// - 结算（胜利 / 失败 + 返回主菜单）
+    /// 界面构成：
+    /// - 主菜单（场景里手工搭的 Canvas：开始游戏 / 设置 / 退出游戏）
+    /// - 战斗画布 battleCanvas（场景里手工搭的 Canvas，开局后显示，并按本局随机地图切换场景）
+    /// - HUD（运行时搭：阶段、下一次钟声倒计时、自己的牌与人；收集/淘汰只换提示文案）
+    /// - 结算（运行时搭：胜利 / 失败 + 返回主菜单）
     ///
     /// 场景约定（名字对上就能自动找到，也可以在 Inspector 里手动拖）：
     /// MainMenu / Start / Setting / Exit / SettingPanel（FullScreen / CloseSetting / AudioSlider）。
+    /// 战斗画布按 "battleCanvas" 找，兼容场景里的旧名 "BattleGround"；六个地图槽位挂在 BattleMapPresenter 上。
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("钟声/界面 GameUiController")]
@@ -44,6 +46,12 @@ namespace Ring.UI
         private const string CloseSettingsButtonName = "CloseSetting";
         private const string VolumeSliderName = "AudioSlider";
         private const string MenuBackdropName = "MenuImage";
+
+        /// <summary>战斗画布在场景里的名字（大小写不敏感）。</summary>
+        private const string BattleCanvasName = "battleCanvas";
+
+        /// <summary>兼容场景里现有的旧名字，避免用户改名后接不上。</summary>
+        private const string LegacyBattleCanvasName = "BattleGround";
         private const string SettingsBackdropName = "SettingImage";
         private const string CharacterRosterPath = "Assets/Data/Characters/CharacterRoster.asset";
 
@@ -85,6 +93,15 @@ namespace Ring.UI
         [Tooltip("音量滑条；留空时按名字自动找。")]
         private Slider volumeSlider;
 
+        [Header("战斗界面（场景里手工搭的 Canvas）")]
+        [SerializeField]
+        [Tooltip("开始游戏后显示的战斗画布；留空时按名字 \"" + BattleCanvasName + "\" 或 \"" + LegacyBattleCanvasName + "\" 自动找。")]
+        private Canvas battleCanvas;
+
+        [SerializeField]
+        [Tooltip("六个地图槽位的展示器；留空时自动在场景里找。地图实体还没做时可以不挂。")]
+        private BattleMapPresenter battleMapPresenter;
+
         [Header("行为")]
         [SerializeField]
         [Tooltip("游戏流程控制器；留空时自动取 GameFlow.Instance。")]
@@ -113,6 +130,14 @@ namespace Ring.UI
         [SerializeField]
         [Tooltip("是否打印界面切换日志。")]
         private bool logUi;
+
+        [SerializeField]
+        [Tooltip("结算时是否仍显示战斗画布（结算面板是半透明的，能透出地图）。")]
+        private bool keepBattleCanvasOnResult = true;
+
+        [SerializeField]
+        [Tooltip("是否把运行时搭的 HUD 叠在战斗画布上；只想用场景里手工搭的 UI 时关掉。")]
+        private bool showHudWithBattleCanvas = true;
 
         private GameObject hudRoot;
         private GameObject resultRoot;
@@ -146,6 +171,7 @@ namespace Ring.UI
             }
 
             ResolveMenuReferences();
+            ResolveBattleReferences();
 
             if (autoBuildUi)
             {
@@ -156,6 +182,7 @@ namespace Ring.UI
             {
                 gameFlow.StateChanged += HandleStateChanged;
                 gameFlow.MatchFinished += HandleMatchFinished;
+                gameFlow.MapChanged += HandleMapChanged;
                 ApplyState(gameFlow.State);
             }
             else
@@ -170,6 +197,7 @@ namespace Ring.UI
             {
                 gameFlow.StateChanged -= HandleStateChanged;
                 gameFlow.MatchFinished -= HandleMatchFinished;
+                gameFlow.MapChanged -= HandleMapChanged;
             }
 
             // 暂停状态下被销毁（比如退出 Play），别把 Time.timeScale 留在 0。
@@ -196,6 +224,88 @@ namespace Ring.UI
             {
                 refreshTimer = 0.1f;
                 RefreshHud();
+            }
+        }
+
+        // ---------- 战斗画布与地图 ----------
+
+        /// <summary>
+        /// 把场景里的战斗画布与地图展示器找齐。刻意不自动创建任何 UI 物体 ——
+        /// 画布由用户在场景里手工搭、拖进 Inspector；这里只做引用解析与显隐。
+        /// </summary>
+        private void ResolveBattleReferences()
+        {
+            if (battleCanvas == null)
+            {
+                battleCanvas = FindBattleCanvas();
+            }
+
+            if (battleMapPresenter == null)
+            {
+                BattleMapPresenter[] presenters = FindObjectsOfType<BattleMapPresenter>(true);
+                if (presenters.Length > 0)
+                {
+                    battleMapPresenter = presenters[0];
+                }
+            }
+
+            if (battleCanvas == null)
+            {
+                Debug.LogWarning(
+                    "[界面] 找不到战斗画布（名字 \"" + BattleCanvasName + "\" 或 \"" + LegacyBattleCanvasName
+                    + "\"）：开始游戏后不会切换战斗界面。请在 Inspector 里把 battleCanvas 拖进来。", this);
+            }
+
+            if (battleMapPresenter == null)
+            {
+                Debug.LogWarning(
+                    "[界面] 场景里没有 BattleMapPresenter：本局仍会随机地图，但不展示地图场景"
+                    + "（六个地图实体尚未制作，这是预期状态）。接法见 Docs/05_战斗画布与地图接口.md。", this);
+            }
+        }
+
+        /// <summary>
+        /// 按名字找战斗画布：优先 "battleCanvas"，其次兼容场景里现有的旧名 "BattleGround"。
+        /// 大小写不敏感；找不到返回 null，让调用方打警告而不是猜一个。
+        /// </summary>
+        private static Canvas FindBattleCanvas()
+        {
+            Canvas fallback = null;
+            Canvas[] canvases = FindObjectsOfType<Canvas>(true);
+            for (int i = 0; i < canvases.Length; i++)
+            {
+                Canvas canvas = canvases[i];
+                if (canvas == null || canvas.rootCanvas != canvas)
+                {
+                    continue;
+                }
+
+                if (string.Equals(canvas.name, BattleCanvasName, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return canvas;
+                }
+
+                if (fallback == null
+                    && string.Equals(canvas.name, LegacyBattleCanvasName, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    fallback = canvas;
+                }
+            }
+
+            return fallback;
+        }
+
+        /// <summary>开局选定地图后：让展示器切到对应场景。ApplyState 里还有一次幂等兜底。</summary>
+        private void HandleMapChanged(BattleMapId map)
+        {
+            if (battleMapPresenter != null)
+            {
+                battleMapPresenter.Show(map);
+            }
+
+            if (logUi)
+            {
+                Debug.Log("[界面] 本局地图：" + map.ToDisplayName(), this);
             }
         }
 
@@ -723,7 +833,10 @@ namespace Ring.UI
             bool running = state.IsRunning();
             bool finished = state.IsFinished();
 
-            // 面板切换：主菜单 Canvas 是场景里的，HUD/结算挂在运行时新建的 Canvas 上。
+            // 战斗画布：局内（准备/收集/淘汰）显示；结算时按开关决定是否保留（结算面板半透明，能透出地图）。
+            bool showBattle = !menu && (running || (finished && keepBattleCanvasOnResult));
+
+            // 面板切换：主菜单与战斗画布都是场景里的，HUD/结算挂在运行时新建的 Canvas 上。
             if (menu)
             {
                 ShowMenu();
@@ -733,9 +846,28 @@ namespace Ring.UI
                 HideMenu();
             }
 
+            if (battleCanvas != null)
+            {
+                battleCanvas.gameObject.SetActive(showBattle);
+            }
+
+            // 地图场景：局内按本局随机到的编号展示，回主菜单或隐藏战斗画布时收起。
+            // Show 是幂等的：Loading → Collect 阶段切换会重复调用，不会反复触发 Enter。
+            if (battleMapPresenter != null)
+            {
+                if (showBattle)
+                {
+                    battleMapPresenter.Show(gameFlow != null ? gameFlow.CurrentMap : BattleMapId.Map01);
+                }
+                else
+                {
+                    battleMapPresenter.Hide();
+                }
+            }
+
             if (hudRoot != null)
             {
-                hudRoot.SetActive(running);
+                hudRoot.SetActive(running && showHudWithBattleCanvas);
             }
 
             if (resultRoot != null)
@@ -767,7 +899,9 @@ namespace Ring.UI
 
             if (logUi)
             {
-                Debug.Log("[界面] 切到 " + state + "：主菜单 " + (menu ? "显示" : "隐藏") + "，HUD " + (running ? "显示" : "隐藏")
+                Debug.Log("[界面] 切到 " + state + "：主菜单 " + (menu ? "显示" : "隐藏")
+                    + "，战斗画布 " + (showBattle ? "显示" : "隐藏")
+                    + "，HUD " + (running && showHudWithBattleCanvas ? "显示" : "隐藏")
                     + "，结算 " + (finished ? "显示" : "隐藏") + "。", this);
             }
         }

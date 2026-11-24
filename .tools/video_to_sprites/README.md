@@ -1,60 +1,69 @@
-# 视频 → Unity Sprite 序列帧
+# 视频 → 序列帧 Sprite 链路
 
-处理「素材其一.mp4」（水墨剑客攻击）时验证过的一条链路。后续素材按同样方式跑。
+把水墨风角色视频抠成带透明通道的 Sprite，并生成 Unity 序列帧动画。
+素材：`C:\Users\Muwen\Downloads\素材其一.mp4`（1280×720 / 24fps / 10s）
 
-## 依赖
+## 运行
 
-用 WorkBuddy 管理的 Python 环境（已装好 opencv / numpy / pillow）：
-
+```bash
+PY="C:/Users/Muwen/.workbuddy/binaries/python/envs/default/Scripts/python.exe"
+"$PY" .tools/video_to_sprites/1_extract_matte.py    # 抠图，输出 Temp/v10/rgba_XX.png
+"$PY" .tools/video_to_sprites/2_build_assets.py     # 输出 sprite + meta + .anim + .controller
 ```
-C:/Users/Muwen/.workbuddy/binaries/python/envs/default/Scripts/python.exe
-```
 
-若该环境丢失，pip 直连索引会失败（代理下 pip 解析不到 wheel），绕法：
+`1_extract_matte.py` 首次运行需要 `Temp/bg_stats.npz`（整段时间统计），
+它由早期脚本生成；换新视频时先跑一次统计（见文末「换素材」）。
 
-1. `curl` 抓 `https://pypi.tuna.tsinghua.edu.cn/simple/<包名>/` 存成 html
-2. 正则挑出 `cp313-cp313-win_amd64.whl` / `cp37-abi3-win_amd64.whl` 的最大版本
-3. `curl -O` 下载到本地，`pip install --no-index *.whl`
+## 这套抠图的三个关键点
 
-## 四步
+**1. 不能按亮度做 alpha。**
+背景纸 luma=231，刀刃/手掌也是 228–231。任何 `alpha = f(亮度)` 的映射都会把白刃和白手
+判成背景。第一版就是这样，刀身中段整段消失、手掌透明。
 
-| 步骤 | 脚本 | 产物 |
+**2. 刀身靠「直线带状闭运算」找回。**
+刀是画面里最长的直线结构。用 `HoughLinesP`（minLineLength=150，maxLineGap=5，
+排除 y>560 的地面带）拿到刀轴，在 ±17px 的窄带内做 21×21 椭圆核闭运算，
+把刀刃上缘与刀脊两条平行边缘之间填实，再与亮度的基础 alpha 取 max。
+
+窄带限制是关键：早期直接在整帧做闭运算，会把墨爆的缝隙、袖褶、腿间空隙一起填成白块。
+
+**3. 手掌靠「小面积纸色连通域 + 挨着袖子」找回。**
+背景纸是一个与画面边界连通的超大连通域；手掌是被手臂围住的小连通域（350–5200 px²）
+且与浅灰袖子相邻。按这个条件筛，手掌能被填成实体，背景纸不会。
+
+## 逐帧常量
+
+| 位置 | 值 | 说明 |
 |---|---|---|
-| 1 | `1_extract_matte.py` | `Temp/build/rgba_XX.png`，1280×720 全幅 RGBA 抠图 |
-| 2 | `2_write_sprites.py` | `Assets/.../swordsman_atk_XX.png`，1024×576 + 预览图 |
-| 3 | `3_clean_residue.py` | 抹掉左下角不连主体的地面残墨 |
-| 4 | `4_write_meta.py` | 重写 `.png.meta`（Sprite 导入配置） |
+| `TIMES` | 0.42 … 9.58 共 12 点 | 关键帧时间，秒 |
+| `MANUAL_BLADE` | `{5: [...]}` | 第 05 帧刀刃上缘完全没有可见边界，用人工刀轴补一段 |
+| `zone` | `y>385 & x<345`、`y>600` | 固定装饰墨区（左下墨团、地面墨带） |
+| `a[636:, :] = 0` | — | 画面最底部只有地面墨，直接清 |
+| `PIVOT` | `(0.45, 0.12)` | 脚底锚点；实测各帧脚底距底 68px / 576 |
 
-## 每次要改的常量
+## 输出
 
-- `1_extract_matte.py`
-  - `SRC`：视频路径
-  - `TIMES`：要哪几秒（改帧数就改这里）
-  - `zone[385:, :345]` / `zone[600:, :]`：固定背景装饰区（左下墨团 + 地面墨带），参数是 `[起始行, 结束列]`
-  - `a[636:, :] = 0`：底部只放背景墨的条带
-- `2_write_sprites.py`
-  - `DEST`、`OUT_W/OUT_H`、`PIVOT`、`PPU`
-- `3_clean_residue.py`：`cx < 470 and cy > 380` 的左下判定框
-- `4_write_meta.py`
-  - `DEST`、`PIVOT`、`PPU`，以及 `guid` 里的命名空间前缀（`Ring/Swordsman/`）
+- `Assets/Art/Characters/Swordsman/Attack/swordsman_atk_fix_01..12.png`（1024×576，RGBA）
+- 同名 `.png.meta`：Sprite(Single)、PPU 100、Custom Pivot、Alpha Is Transparency
+- `SwordsmanAttack.anim`：12 帧 @12fps，1 秒循环
+- `SwordsmanAttack.controller`：单 state「Attack」，默认循环
 
-## 抠像原理（为什么不是简单阈值）
+原始 `swordsman_atk_01..12.png` 保持不动（旧版抠图），两套并存便于对比。
 
-这部片的背景不是纯色：纸张浅灰 ~235–245，左下有一大团水墨，底部有墨带，而且这团墨在时间上还在缓慢流动（逐像素标准差 46–61），任何「静态背景」假设都会失效。
+## 换素材要改的地方
 
-实际用的组合：
+1. `1_extract_matte.py`：`SRC`、`TIMES`、`zone` 坐标、`MANUAL_BLADE`（大多数视频不需要）
+2. `2_build_assets.py`：`TIMES`、`OUT_W/OUT_H`、`PIVOT`、资源目录
+3. 先重建时间统计：
 
-1. **绝对亮度软阈值**取 alpha（`218 → 0`，`100 → 1`，再 `^0.85` 提亮中间调）。人物是深墨，纸白天然为 0，所以人物不会被挖洞——这是关键，用中值背景做减法会把人物身体打穿。
-2. **静态墨迹抑制**：`dark_ratio > 0.9 且 std < 12 且 bg < 230` 的像素，若当帧与中值背景接近，则抑制。用于清掉纸张上的淡墨。
-3. **固定装饰区空间抑制**（最后执行，避免被孔洞回填补回）：区域内只保留亮度 < 60 的极黑像素，其余抹平。这一招才真正清掉左下墨团。
-4. **孔洞回填**：从四角 flood fill，填掉被围住的透明洞，修复躯体上偶发的缺口。
-5. **颜色扩散**：把透明区的 RGB 向外扩散 14 圈，防止 Unity 双线性采样时把纸白拉进边缘形成白边。
-6. **连通域过滤**：只保留与主体相邻的墨迹，丢掉孤立背景残块。
+```python
+cap = cv2.VideoCapture(SRC)          # 累加 luma 的 median / std / 暗帧占比
+# 结果存为 Temp/bg_stats.npz -> {"bg", "std", "dark"}
+```
 
-## 输出约定
+## 已知限制
 
-- 画布统一 1024×576（全幅缩放 0.8），所有帧原点一致，换帧不抖
-- 轴心 `Pivot = (0.45, 0.12)`，落在脚底（实测各帧脚底都在 y=508，距底 68px）
-- `PPU = 100`，`alignment: 9`（Custom），`textureType: 8`（Sprite），`alphaIsTransparency: 1`
-- Unity 2022.3 的 `TextureImporter.serializedVersion` 是 **11**（不是 12），字段顺序可参照
-  `Library/PackageCache/com.unity.2d.animation@9.2.0/.../Animation.IKCCD On.png.meta`
+- **03、11 帧刀尖超出原视频画面上边界**，被硬切平。原片如此，画布内没有可恢复的像素；
+  要补只能扩展画布后人工生成刀锋。
+- 刀刃的白与纸的白在灰度上完全同值，极端角度（刀刃正对镜头、无可见刀脊）时带状填充
+  可能漏一小段，需要往 `MANUAL_BLADE` 里加人工轴。
