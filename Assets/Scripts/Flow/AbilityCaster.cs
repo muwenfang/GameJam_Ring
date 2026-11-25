@@ -1,5 +1,6 @@
 using Ring.Abilities;
 using Ring.Bells;
+using Ring.Maps;
 using UnityEngine;
 
 namespace Ring.Flow
@@ -32,6 +33,9 @@ namespace Ring.Flow
         private bool logCasts = true;
 
         private CharacterInstance instance;
+
+        private Ring.Characters.SwordsmanSpriteAnimation swordAnimation;
+        private bool swordAnimationSearched;
 
         private void Awake()
         {
@@ -96,6 +100,15 @@ namespace Ring.Flow
                 instance.Heal(activation.HealAmount);
             }
 
+            // 只有「实际施放的是剑士本我」才走突进斩。
+            // 拆卡混装时玩家可能拿着别人人设的本我卡，此时按 instance.Persona 判断会
+            // 误播剑士突刺、并套用 3×2 命中框（别人技能多半没有 DashCells / Area 配置）。
+            if (slot == AbilitySlot.Id && activation.Definition != null
+                && activation.Definition.Persona == Ring.Characters.PersonaId.Swordsman)
+            {
+                ExecuteSwordsmanDash(activation.Definition);
+            }
+
             if (logCasts)
             {
                 var definition = activation.Definition;
@@ -109,7 +122,71 @@ namespace Ring.Flow
             return true;
         }
 
-        /// <summary>打一次平A：射程内最近的活人吃伤害，附加效果按特质结算。</summary>
+        private void ExecuteSwordsmanDash(AbilityDefinition definition)
+        {
+            Ring.Inputs.GameInput input = Ring.Inputs.GameInput.Instance;
+            Vector2 direction = input != null ? input.MoveAxis : Vector2.zero;
+            if (direction.sqrMagnitude < 0.001f)
+            {
+                var renderer = SwordAnimation != null ? SwordAnimation.Renderer : null;
+                direction = renderer != null && renderer.flipX ? Vector2.left : Vector2.right;
+            }
+            direction.Normalize();
+
+            Vector2 start = transform.position;
+            float dashDistance = Mathf.Max(0f, definition.DashCells) * unitsPerCell;
+            transform.position = start + direction * dashDistance;
+
+            // 命中判定挂到突刺的刀光爆发帧；没有动画组件 / 帧缺失时立即结算。
+            // 位移仍是既有的一次性瞬移（见 Docs/07 第八节），本次只修「判定与动画不同步」。
+            AbilityDefinition def = definition;
+            Vector2 origin = start;
+            Vector2 dir = direction;
+            float distance = dashDistance;
+            System.Action resolve = () => ResolveDashHit(def, origin, dir, distance);
+
+            Ring.Characters.SwordsmanSpriteAnimation animation = SwordAnimation;
+            if (animation != null && animation.PlayDash(resolve))
+            {
+                return;
+            }
+
+            resolve();
+        }
+
+        /// <summary>突进路程与终点前一格组成的矩形命中框；用朝向轴投影支持斜向输入。</summary>
+        private void ResolveDashHit(AbilityDefinition definition, Vector2 start, Vector2 direction, float dashDistance)
+        {
+            if (instance == null || instance.IsDead)
+            {
+                return;
+            }
+
+            float halfLength = Mathf.Max(0.5f, definition.AreaLengthCells * unitsPerCell * 0.5f);
+            float halfWidth = Mathf.Max(0.5f, definition.AreaWidthCells * unitsPerCell * 0.5f);
+            Vector2 center = start + direction * (dashDistance * 0.5f + unitsPerCell * 0.5f);
+            CharacterInstance[] targets = FindObjectsOfType<CharacterInstance>();
+            for (int i = 0; i < targets.Length; i++)
+            {
+                CharacterInstance target = targets[i];
+                if (target == null || target == instance || target.IsDead
+                    || (target.Participant != null && !target.Participant.IsInPlay)) continue;
+                Vector2 offset = (Vector2)target.transform.position - center;
+                float along = Vector2.Dot(offset, direction);
+                float across = Mathf.Abs(Vector2.Dot(offset, new Vector2(-direction.y, direction.x)));
+                if (Mathf.Abs(along) > halfLength || across > halfWidth) continue;
+
+                float previousHealth = target.CurrentHealth;
+                target.TakeDamage(definition.Damage);
+                if (target.CurrentHealth < previousHealth)
+                    instance.NotifyDamageDealt();
+            }
+        }
+
+        /// <summary>
+        /// 打一次平A：先扣攻击间隔并起挥剑动作，伤害在刀光帧结算（射程内最近的活人）。
+        /// 没有剑士动画组件 / 帧缺失时退化为立即结算，保证不会「按了没反应」。
+        /// </summary>
         public bool BasicAttack()
         {
             if (instance == null || instance.Abilities == null)
@@ -123,6 +200,27 @@ namespace Ring.Flow
                 return false;
             }
 
+            AbilityDefinition definition = activation.Definition;
+            System.Action resolve = () => ResolveBasicAttackHit(definition);
+
+            Ring.Characters.SwordsmanSpriteAnimation animation = SwordAnimation;
+            if (animation != null && animation.PlayAttack(resolve))
+            {
+                return true;
+            }
+
+            resolve();
+            return true;
+        }
+
+        /// <summary>挥剑刀光帧到达时结算一次平A（含特质附加效果与击退）。</summary>
+        private void ResolveBasicAttackHit(AbilityDefinition definition)
+        {
+            if (instance == null || instance.IsDead)
+            {
+                return;
+            }
+
             DerivedAbilityStats derived = instance.Derived;
             float range = Mathf.Max(0.5f, derived.AttackRangeCells) * unitsPerCell;
             CharacterInstance target = FindNearestTarget(range);
@@ -130,10 +228,12 @@ namespace Ring.Flow
             {
                 if (logCasts)
                 {
-                    Debug.Log("[技能] 平A：" + activation.Definition.AbilityName + " 挥空了（" + AbilityMath.Number(range) + " 格内没有人）。", this);
+                    Debug.Log("[技能] 平A："
+                        + (definition != null ? definition.AbilityName : "普攻")
+                        + " 挥空了（" + AbilityMath.Number(range) + " 格内没有人）。", this);
                 }
 
-                return true;
+                return;
             }
 
             BasicAttackHitResult hit = instance.NotifyBasicAttackHit(target.Id);
@@ -152,8 +252,21 @@ namespace Ring.Flow
                 Debug.Log("[技能] 平A 命中 " + target.DisplayName + "，伤害 " + AbilityMath.Number(damage)
                     + "（" + hit + "）", this);
             }
+        }
 
-            return true;
+        /// <summary>剑士序列帧组件（挂在 Visual 子物体上），只在首次用到时查找一次。</summary>
+        private Ring.Characters.SwordsmanSpriteAnimation SwordAnimation
+        {
+            get
+            {
+                if (!swordAnimationSearched)
+                {
+                    swordAnimationSearched = true;
+                    swordAnimation = GetComponentInChildren<Ring.Characters.SwordsmanSpriteAnimation>();
+                }
+
+                return swordAnimation;
+            }
         }
 
         private CharacterInstance FindNearestTarget(float rangeWorld)
@@ -161,6 +274,13 @@ namespace Ring.Flow
             CharacterInstance[] all = FindObjectsOfType<CharacterInstance>();
             CharacterInstance best = null;
             float bestDistance = float.MaxValue;
+
+            // 三场 1v1 并行：平A 只允许命中「本场对手」，不能跨区域打到别场的人。
+            // ArenaPlan 不存在时（主菜单、未开局）退回原来的「射程内最近目标」行为。
+            ArenaPlan plan = GameFlow.Instance != null ? GameFlow.Instance.CurrentPlan : null;
+            int pairedOpponentId = plan != null && instance != null && plan.Contains(instance.Id)
+                ? plan.OpponentOf(instance.Id)
+                : -1;
 
             for (int i = 0; i < all.Length; i++)
             {
@@ -171,6 +291,11 @@ namespace Ring.Flow
                 }
 
                 if (candidate.Participant != null && !candidate.Participant.IsInPlay)
+                {
+                    continue;
+                }
+
+                if (pairedOpponentId >= 0 && candidate.Id != pairedOpponentId)
                 {
                     continue;
                 }

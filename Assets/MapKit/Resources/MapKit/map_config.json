@@ -1,0 +1,76 @@
+{
+  "grid": {
+    "cols": 25,
+    "rows": 12,
+    "tileUnits": 1,
+    "actorWidth": 1,
+    "actorHeight": 2
+  },
+  "bamboo": {
+    "darknessAlpha": 0.99,
+    "flashSeconds": 0.3,
+    "intervalSeconds": {
+      "min": 0.8,
+      "max": 1.2
+    },
+    "extraCheckEvery": 1,
+    "extraChance": 0.5,
+    "damageChance": 0.02,
+    "damage": 40,
+    "stunSeconds": 1,
+    "normalHitsGround": false,
+    "normalBoltEndHeight": {
+      "min": 0.3,
+      "max": 0.6
+    },
+    "normalColor": "#7FA6FF",
+    "damageColor": "#B0127A"
+  },
+  "steam": {
+    "batchInterval": {
+      "min": 4,
+      "max": 5
+    },
+    "ventRatio": 0.2,
+    "maxConsecutive": 3,
+    "warningSeconds": 1,
+    "damage": 5
+  },
+  "arena": {
+    "intervalSeconds": 15,
+    "atkBonusPerStack": 0.15,
+    "stackable": true,
+    "onlyInsideArea": true
+  },
+  "forest": {
+    "batchInterval": {
+      "min": 4,
+      "max": 6
+    },
+    "ratioOfEmpty": 0.2,
+    "maxConsecutive": 3,
+    "growSeconds": 0.7,
+    "matureSeconds": 2,
+    "witherSeconds": 0.3,
+    "rootSeconds": 0.8,
+    "damage": 0,
+    "tangleOncePerPlant": true
+  },
+  "clock": {
+    "intervalSeconds": 10,
+    "rewindSeconds": 3,
+    "hasteMultiplier": 1.15,
+    "slowMultiplier": 0.85,
+    "speedDuration": 4
+  },
+  "cave": {
+    "intervalSeconds": 8,
+    "rockCount": {
+      "min": 3,
+      "max": 10
+    },
+    "warningSeconds": 1,
+    "damage": 10,
+    "rockSizeTiles": 1
+  }
+}

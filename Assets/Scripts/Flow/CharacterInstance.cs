@@ -465,9 +465,34 @@ namespace Ring.Flow
                 renderer = go.AddComponent<SpriteRenderer>();
             }
 
+            renderer.sortingOrder = isPlayer ? 10 : 5;
+
+            // 剑士走序列帧：颜色、尺寸与脚底对齐都由 SwordsmanSpriteAnimation 接管。
+            // 这里不能套占位色块——否则整张水墨图会被染成人设色，方块尺寸也会盖住人物。
+            if (persona == PersonaId.Swordsman)
+            {
+                renderer.color = Color.white;
+                go.transform.localPosition = Vector3.zero;
+                go.transform.localScale = Vector3.one;
+
+                var animation = go.GetComponent<Ring.Characters.SwordsmanSpriteAnimation>();
+                if (animation == null)
+                {
+                    // AddComponent 会立即触发 Awake，由组件自己加载帧并套用脚底对齐。
+                    go.AddComponent<Ring.Characters.SwordsmanSpriteAnimation>();
+                }
+                else
+                {
+                    // 角色被提升为玩家时外观会重建，让组件重新套用当前状态。
+                    animation.RefreshVisual();
+                }
+
+                return;
+            }
+
+            // 其余五个人设继续用纯色方块占位。
             renderer.sprite = GetPlaceholderSprite();
             renderer.color = GetPersonaColor(persona, isPlayer);
-            renderer.sortingOrder = isPlayer ? 10 : 5;
 
             // 1×1 的白色 sprite，靠 transform 缩放给出方块大小。
             go.transform.localScale = new Vector3(0.9f, 0.9f, 1f);

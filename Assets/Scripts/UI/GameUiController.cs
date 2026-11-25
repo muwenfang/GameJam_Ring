@@ -1,7 +1,4 @@
 ﻿using System.Collections.Generic;
-using System.Text;
-using Ring.Abilities;
-using Ring.Bells;
 using Ring.Characters;
 using Ring.Flow;
 using Ring.Inputs;
@@ -99,8 +96,20 @@ namespace Ring.UI
         private Canvas battleCanvas;
 
         [SerializeField]
-        [Tooltip("六个地图槽位的展示器；留空时自动在场景里找。地图实体还没做时可以不挂。")]
+        [Tooltip("六个地图槽位的展示器；留空时自动在场景里找。MapKit 六张地图根节点搭好前可以不挂。")]
         private BattleMapPresenter battleMapPresenter;
+
+        [SerializeField]
+        [Tooltip("可选：显示本局地图名与机制说明的 Text。场景里手工搭好后拖入；留空不影响运行，代码不自动创建 UI。")]
+        private Text mapNameLabel;
+
+        [SerializeField]
+        [Tooltip("可选：显示当前地图机制状态的 Text（读取 MapKit 机制脚本的 StatusText）。留空不影响运行。")]
+        private Text mapStatusLabel;
+
+        [SerializeField]
+        [Tooltip("战斗 HUD（左右血条 + 状态栏 + 钟声倒计时/回合数）。留空时先在场景里找，找不到再运行时搭一套。")]
+        private BattleHud battleHud;
 
         [Header("行为")]
         [SerializeField]
@@ -139,13 +148,13 @@ namespace Ring.UI
         [Tooltip("是否把运行时搭的 HUD 叠在战斗画布上；只想用场景里手工搭的 UI 时关掉。")]
         private bool showHudWithBattleCanvas = true;
 
+        [SerializeField]
+        [Tooltip("结算（胜利 / 失败）时是否仍显示 HUD。默认关：局内（准备 / 收集 / 淘汰）HUD 一直显示。")]
+        private bool keepHudOnResult;
+
         private GameObject hudRoot;
         private GameObject resultRoot;
 
-        private Text stateLabel;
-        private Text timerLabel;
-        private Text playerLabel;
-        private Text rosterLabel;
         private Text resultTitle;
         private Text resultReason;
 
@@ -183,6 +192,8 @@ namespace Ring.UI
                 gameFlow.StateChanged += HandleStateChanged;
                 gameFlow.MatchFinished += HandleMatchFinished;
                 gameFlow.MapChanged += HandleMapChanged;
+                gameFlow.ArenasChanged += HandleArenasChanged;
+                gameFlow.GameInitialized += HandleGameInitialized;
                 ApplyState(gameFlow.State);
             }
             else
@@ -198,6 +209,8 @@ namespace Ring.UI
                 gameFlow.StateChanged -= HandleStateChanged;
                 gameFlow.MatchFinished -= HandleMatchFinished;
                 gameFlow.MapChanged -= HandleMapChanged;
+                gameFlow.ArenasChanged -= HandleArenasChanged;
+                gameFlow.GameInitialized -= HandleGameInitialized;
             }
 
             // 暂停状态下被销毁（比如退出 Play），别把 Time.timeScale 留在 0。
@@ -222,8 +235,9 @@ namespace Ring.UI
             refreshTimer -= Time.deltaTime;
             if (refreshTimer <= 0f)
             {
+                // HUD 的数字（倒计时、血条追赶）由 BattleHud 自己按帧刷新，这里只跟地图机制状态。
                 refreshTimer = 0.1f;
-                RefreshHud();
+                RefreshMapStatus();
             }
         }
 
@@ -249,6 +263,11 @@ namespace Ring.UI
                 }
             }
 
+            if (battleHud == null)
+            {
+                battleHud = FindObjectOfType<BattleHud>(true);
+            }
+
             if (battleCanvas == null)
             {
                 Debug.LogWarning(
@@ -260,7 +279,7 @@ namespace Ring.UI
             {
                 Debug.LogWarning(
                     "[界面] 场景里没有 BattleMapPresenter：本局仍会随机地图，但不展示地图场景"
-                    + "（六个地图实体尚未制作，这是预期状态）。接法见 Docs/05_战斗画布与地图接口.md。", this);
+                    + "（MapKit 六张地图根节点尚未搭进场景，这是预期状态）。接法见 Docs/06_MapKit地图资源与接线.md。", this);
             }
         }
 
@@ -303,9 +322,60 @@ namespace Ring.UI
                 battleMapPresenter.Show(map);
             }
 
+            RefreshMapLabels(map);
+
             if (logUi)
             {
-                Debug.Log("[界面] 本局地图：" + map.ToDisplayName(), this);
+                Debug.Log("[界面] 本局地图：" + map.ToDisplayName()
+                    + "（资源 " + map.ToZoneFolder() + "）", this);
+            }
+        }
+
+        /// <summary>
+        /// 刷新两个可选地图标签。两个都没拖时是空操作 —— 代码不创建、不查找任何 UI 物体。
+        /// 地图名取 BattleMaps 映射表；状态文本经 BattleMapPresenter → MapScene 反射读 MapKit 机制。
+        /// </summary>
+        private void RefreshMapLabels(BattleMapId map)
+        {
+            if (mapNameLabel == null && mapStatusLabel == null)
+            {
+                return;
+            }
+
+            if (mapNameLabel != null)
+            {
+                BattleMapInfo info = BattleMaps.Info(map);
+                mapNameLabel.text = info != null
+                    ? info.DisplayName + "  ·  " + info.MechanicSummary
+                    : "未知地图";
+            }
+
+            RefreshMapStatus();
+        }
+
+        /// <summary>只刷机制状态标签；Update 里按 0.1s 节流调用，避免每帧反射。</summary>
+        private void RefreshMapStatus()
+        {
+            if (mapStatusLabel == null)
+            {
+                return;
+            }
+
+            string status = battleMapPresenter != null ? battleMapPresenter.StatusText() : string.Empty;
+            mapStatusLabel.text = string.IsNullOrEmpty(status) ? "机制：待命" : "机制：" + status;
+        }
+
+        /// <summary>回主菜单 / 隐藏战斗画布时清空两个标签，避免残留上一局文字。</summary>
+        private void ClearMapLabels()
+        {
+            if (mapNameLabel != null)
+            {
+                mapNameLabel.text = string.Empty;
+            }
+
+            if (mapStatusLabel != null)
+            {
+                mapStatusLabel.text = string.Empty;
             }
         }
 
@@ -723,45 +793,40 @@ namespace Ring.UI
 
         private void BuildGameplayUi()
         {
+            // 结算面板仍旧由代码搭（纯占位，改的优先级低）。
             Canvas canvas = UiBuilder.CreateCanvas("RingCanvas");
-            hudRoot = BuildHud(canvas.transform);
             resultRoot = BuildResult(canvas.transform);
 
+            // HUD：场景里手工搭的优先（拖进 Inspector 或在场景里找），都没有才运行时兜底搭一套。
+            if (battleHud == null)
+            {
+                battleHud = FindObjectOfType<BattleHud>(true);
+            }
+
+            if (battleHud == null)
+            {
+                battleHud = BattleHudBuilder.Build(canvas.transform);
+                Debug.Log(
+                    "[界面] 场景里没有战斗 HUD，已运行时搭了一套默认布局。"
+                    + "想自由改位置/配色的话，用菜单「钟声 / 界面 / 生成战斗 HUD（场景）」把它落成场景物体后再调。",
+                    this);
+            }
+
+            hudRoot = battleHud.gameObject;
             hudRoot.SetActive(false);
             resultRoot.SetActive(false);
         }
 
-        private GameObject BuildHud(Transform parent)
+        /// <summary>
+        /// 血条、特性栏、倒计时、回合数都在 <see cref="BattleHud"/> 里；这里只在阶段切换时催它立刻重算一遍，
+        /// 免得等它的 0.12 秒轮询。
+        /// </summary>
+        private void RefreshHud()
         {
-            RectTransform panel = UiBuilder.CreateFullScreenPanel(parent, "Hud", new Color(0f, 0f, 0f, 0.18f));
-            panel.GetComponent<Image>().raycastTarget = false;
-
-            stateLabel = UiBuilder.CreateText(
-                panel, "State", string.Empty, 34, Color.white, TextAnchor.UpperLeft,
-                new Vector2(0f, 1f), new Vector2(0f, 0f), new Vector2(900f, 160f));
-            UiBuilder.Place((RectTransform)stateLabel.transform, new Vector2(0f, 1f), new Vector2(0f, 1f),
-                new Vector2(32f, -24f), new Vector2(900f, 160f));
-            stateLabel.alignment = TextAnchor.UpperLeft;
-
-            timerLabel = UiBuilder.CreateText(
-                panel, "Timer", string.Empty, 44, UiBuilder.AccentColor, TextAnchor.UpperCenter,
-                new Vector2(0.5f, 1f), new Vector2(0f, 0f), new Vector2(900f, 80f));
-            UiBuilder.Place((RectTransform)timerLabel.transform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
-                new Vector2(0f, -24f), new Vector2(900f, 80f));
-
-            playerLabel = UiBuilder.CreateText(
-                panel, "Player", string.Empty, 30, Color.white, TextAnchor.LowerLeft,
-                new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(1100f, 220f));
-            UiBuilder.Place((RectTransform)playerLabel.transform, new Vector2(0f, 0f), new Vector2(0f, 0f),
-                new Vector2(32f, 28f), new Vector2(1100f, 220f));
-
-            rosterLabel = UiBuilder.CreateText(
-                panel, "Roster", string.Empty, 26, new Color(0.86f, 0.88f, 0.92f), TextAnchor.LowerRight,
-                new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(720f, 320f));
-            UiBuilder.Place((RectTransform)rosterLabel.transform, new Vector2(1f, 0f), new Vector2(1f, 0f),
-                new Vector2(-32f, 28f), new Vector2(720f, 320f));
-
-            return panel.gameObject;
+            if (battleHud != null)
+            {
+                battleHud.RefreshNow();
+            }
         }
 
         private GameObject BuildResult(Transform parent)
@@ -796,6 +861,10 @@ namespace Ring.UI
 
             HideSettings();
             gameFlow.ReturnToMenu();
+            // 需求：游戏结束后点击返回、重新开始游戏后需要 initializeGame。
+            // 显式再调一次（幂等；ReturnToMenu 与 StartMatch 内部各保底调用一次），
+            // 确保「返回 → 再来一局」这条路径的清场动作可见、可单独绑到按钮 OnClick。
+            gameFlow.InitializeGame();
             HandleStartClicked();
         }
 
@@ -813,6 +882,8 @@ namespace Ring.UI
 
             HideSettings();
             gameFlow.ReturnToMenu();
+            // 点击「返回」即彻底清场，下一次点「开始游戏」时是一份全新的运行时状态。
+            gameFlow.InitializeGame();
         }
 
         // ---------- 状态切换 ----------
@@ -825,6 +896,18 @@ namespace Ring.UI
         private void HandleMatchFinished(MatchState result)
         {
             ApplyState(result);
+        }
+
+        /// <summary>位置钟声 / B8 重分配后，立刻刷新 HUD 里的「本场对手」与血条。</summary>
+        private void HandleArenasChanged(ArenaPlan plan)
+        {
+            RefreshHud();
+        }
+
+        /// <summary>重开清场后让 HUD 丢掉上一局的数值（此时角色已销毁，刷新只会得到占位值）。</summary>
+        private void HandleGameInitialized()
+        {
+            RefreshHud();
         }
 
         private void ApplyState(MatchState state)
@@ -853,11 +936,12 @@ namespace Ring.UI
 
             // 地图场景：局内按本局随机到的编号展示，回主菜单或隐藏战斗画布时收起。
             // Show 是幂等的：Loading → Collect 阶段切换会重复调用，不会反复触发 Enter。
+            BattleMapId currentMapId = gameFlow != null ? gameFlow.CurrentMap : BattleMapId.Map01;
             if (battleMapPresenter != null)
             {
                 if (showBattle)
                 {
-                    battleMapPresenter.Show(gameFlow != null ? gameFlow.CurrentMap : BattleMapId.Map01);
+                    battleMapPresenter.Show(currentMapId);
                 }
                 else
                 {
@@ -865,9 +949,20 @@ namespace Ring.UI
                 }
             }
 
+            if (showBattle)
+            {
+                RefreshMapLabels(currentMapId);
+            }
+            else
+            {
+                ClearMapLabels();
+            }
+
+            // HUD 在整个局内（准备 / 收集 / 淘汰）一直显示；结算时按开关决定。
+            bool showHud = (running || (finished && keepHudOnResult)) && showHudWithBattleCanvas;
             if (hudRoot != null)
             {
-                hudRoot.SetActive(running && showHudWithBattleCanvas);
+                hudRoot.SetActive(showHud);
             }
 
             if (resultRoot != null)
@@ -897,181 +992,18 @@ namespace Ring.UI
                 RefreshHud();
             }
 
+            if (finished && keepHudOnResult)
+            {
+                RefreshHud();
+            }
+
             if (logUi)
             {
                 Debug.Log("[界面] 切到 " + state + "：主菜单 " + (menu ? "显示" : "隐藏")
                     + "，战斗画布 " + (showBattle ? "显示" : "隐藏")
-                    + "，HUD " + (running && showHudWithBattleCanvas ? "显示" : "隐藏")
+                    + "，HUD " + (showHud ? "显示" : "隐藏")
                     + "，结算 " + (finished ? "显示" : "隐藏") + "。", this);
             }
-        }
-
-        // ---------- HUD 刷新 ----------
-
-        private void RefreshHud()
-        {
-            if (gameFlow == null || stateLabel == null)
-            {
-                return;
-            }
-
-            MatchState state = gameFlow.State;
-
-            stateLabel.text = "阶段：" + state.ToDisplayName() + "\n" + state.ToHint();
-
-            BellSystem bells = gameFlow.Bells;
-            if (state == MatchState.Loading)
-            {
-                timerLabel.text = "准备中…";
-            }
-            else if (state == MatchState.Elimination || (bells != null && bells.Phase == BellPhase.Elimination))
-            {
-                timerLabel.text = "淘汰赛";
-            }
-            else if (bells != null)
-            {
-                timerLabel.text = "下一次钟声：" + Mathf.CeilToInt(Mathf.Max(0f, bells.SecondsUntilNextBell)) + " 秒";
-            }
-            else
-            {
-                timerLabel.text = "（没有钟声系统）";
-            }
-
-            CharacterInstance player = gameFlow.Player;
-            if (player != null)
-            {
-                DerivedAbilityStats derived = player.Derived;
-                var builder = new StringBuilder();
-                builder.Append("你：").Append(player.DisplayName)
-                    .Append("　生命 ").Append(Mathf.CeilToInt(player.CurrentHealth)).Append('/')
-                    .Append(Mathf.CeilToInt(player.MaxHealth))
-                    .Append("　防御 ").Append(Mathf.RoundToInt(derived.Defense))
-                    .Append("（减伤 ").Append(AbilityMath.Percent(derived.DamageReduction)).Append("）")
-                    .Append("　移速 ").Append(AbilityMath.Number(derived.MoveSpeedCellsPerSecond)).Append(" 格/秒");
-                builder.Append('\n').Append(DescribeCards(player.Participant));
-                builder.Append('\n').Append(DescribeAbilities(player));
-                if (player.Abilities != null)
-                {
-                    builder.Append('\n').Append(player.Abilities.DescribeState());
-                }
-
-                playerLabel.text = builder.ToString();
-            }
-            else
-            {
-                playerLabel.text = string.Empty;
-            }
-
-            rosterLabel.text = DescribeRoster();
-        }
-
-        private string DescribeRoster()
-        {
-            MatchSpawner spawner = gameFlow != null ? gameFlow.Spawner : null;
-            if (spawner == null || spawner.Instances.Count == 0)
-            {
-                return string.Empty;
-            }
-
-            var builder = new StringBuilder("场上：");
-            int alive = 0;
-            for (int i = 0; i < spawner.Instances.Count; i++)
-            {
-                CharacterInstance character = spawner.Instances[i];
-                if (character == null)
-                {
-                    continue;
-                }
-
-                bool inPlay = character.Participant == null || character.Participant.IsInPlay;
-                if (inPlay && !character.IsDead)
-                {
-                    alive++;
-                }
-
-                builder.Append('\n').Append(inPlay ? "· " : "× ").Append(character.DisplayName);
-                if (character.HasCompleteSet)
-                {
-                    builder.Append(" ★");
-                }
-            }
-
-            builder.Append("\n在场 ").Append(alive).Append(" 人");
-            return builder.ToString();
-        }
-
-        /// <summary>五个能力槽：特质（被动）、普攻、本我/自我/超我，带冷却状态。</summary>
-        private static string DescribeAbilities(CharacterInstance character)
-        {
-            if (character == null || character.Loadout == null || character.Loadout.IsEmpty)
-            {
-                return "能力：—";
-            }
-
-            var builder = new StringBuilder("能力：");
-            builder.Append(character.Loadout.Describe());
-
-            IReadOnlyList<AbilityCard> cards = character.Loadout.Cards;
-            for (int i = 0; i < cards.Count; i++)
-            {
-                AbilityCard card = cards[i];
-                AbilityDefinition definition = card.Definition;
-                builder.Append('\n').Append("　").Append(card.Slot.ToDisplayName()).Append('：');
-                builder.Append(definition != null ? definition.AbilityName : "（缺少数值）");
-
-                if (card.Slot.IsBasicAttack())
-                {
-                    builder.Append("　伤害 ").Append(AbilityMath.Number(character.Derived.BasicAttackDamage))
-                        .Append("　间隔 ").Append(AbilityMath.Number(character.Derived.AttackIntervalSeconds)).Append("s");
-                }
-                else if (card.Slot.IsSkill())
-                {
-                    float cooldown = character.Abilities != null ? character.Abilities.GetCooldownRemaining(card.Slot) : 0f;
-                    builder.Append(cooldown > 0f
-                        ? "　冷却 " + Mathf.CeilToInt(cooldown) + "s"
-                        : "　就绪");
-                }
-                else
-                {
-                    builder.Append("　被动");
-                }
-            }
-
-            return builder.ToString();
-        }
-
-        private static string DescribeCards(IBellParticipant participant)
-        {
-            if (participant == null)
-            {
-                return "牌：—";
-            }
-
-            var builder = new StringBuilder("牌：");
-            if (participant.Traits.Count == 0)
-            {
-                builder.Append("（无特质）");
-            }
-            else
-            {
-                for (int i = 0; i < participant.Traits.Count; i++)
-                {
-                    if (i > 0)
-                    {
-                        builder.Append("、");
-                    }
-
-                    builder.Append(participant.Traits[i].ToDisplayName());
-                }
-            }
-
-            builder.Append("　技能 ").Append(participant.Skills.Count).Append("/3");
-            if (BellCards.HasCompleteSet(participant.Traits, participant.Skills))
-            {
-                builder.Append("　★已集齐");
-            }
-
-            return builder.ToString();
         }
 
         // ---------- 小工具 ----------

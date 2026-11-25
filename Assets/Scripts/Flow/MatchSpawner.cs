@@ -1,15 +1,23 @@
 using System.Collections.Generic;
 using Ring.Bells;
 using Ring.Characters;
+using Ring.Maps;
 using UnityEngine;
 
 namespace Ring.Flow
 {
     /// <summary>
-    /// 开局生成六个角色：一个玩家、五个人机。
+    /// 开局生成六个角色：一个玩家、五个人机；并按 <see cref="ArenaPlan"/> 把六人摆进三场 1v1。
     ///
     /// 顺序固定按角色总表来（总表里第几个人设就是第几个 id），玩家由 <see cref="playerPersona"/> 指定；
-    /// 这样人机与玩家的 id 稳定，调试与存档都好对。
+    /// 这样人机与玩家的 id 稳定，钟声配对、调试与存档都好对。
+    ///
+    /// 三场 1v1 的**规则**（抽哪三个区域、谁跟谁打）全在纯 C# 的 ArenaPlan；本类只负责
+    /// 把 <see cref="ArenaPlan"/> 翻译成世界坐标落点，不改写任何映射。
+    ///
+    /// 落位来源（都不自动生成 UI）：
+    /// - 优先读 Inspector 里拖进来的 6 个「区域落点」Transform（对应 BattleMapId.Map01..Map06）；
+    /// - 没拖时用计算布局：六个区域按 2 行 3 列排开，每场双方站在区域中心左右各 duelOffset。
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("钟声/角色生成 MatchSpawner")]
@@ -23,12 +31,26 @@ namespace Ring.Flow
         [Tooltip("玩家操控的人设；其余五个人设自动成为人机。")]
         private PersonaId playerPersona = PersonaId.Swordsman;
 
+        [Header("生成站位（ApplyPlan 之前的初始站位）")]
         [SerializeField]
         [Tooltip("六个角色的圆形站位半径（世界单位）。")]
         private float spawnRadius = 3.5f;
 
+        [Header("三场 1v1 落位")]
         [SerializeField]
-        [Tooltip("是否给玩家角色挂上 PlayerMotor（用 GameInput 的移动轴）。")]
+        [Tooltip("可选：六个区域的落点 Transform，顺序对应 BattleMapId.Map01..Map06（= MapKit Z1..Z6）。留空则用计算布局。")]
+        private Transform[] regionAnchors = new Transform[BattleMaps.Count];
+
+        [SerializeField]
+        [Tooltip("未拖区域落点时，六个计算区域之间的中心距（世界单位）。")]
+        private float arenaSpacing = 14f;
+
+        [SerializeField]
+        [Tooltip("每场 1v1 中，双方相对区域中心的左右偏移（世界单位）。")]
+        private float duelOffset = 2.2f;
+
+        [SerializeField]
+        [Tooltip("是否给玩家角色挂上 PlayerMotor（用 GameInput 的移动轴）与 AbilityCaster。")]
         private bool attachPlayerMotor = true;
 
         [SerializeField]
@@ -36,6 +58,7 @@ namespace Ring.Flow
         private bool logSpawn = true;
 
         private readonly List<CharacterInstance> instances = new List<CharacterInstance>(PersonaIds.Count);
+        private ArenaPlan currentPlan;
 
         /// <summary>本局生成的角色（顺序 = 生成顺序）。</summary>
         public IReadOnlyList<CharacterInstance> Instances
@@ -50,6 +73,12 @@ namespace Ring.Flow
 
         /// <summary>玩家角色；未开局时为 null。</summary>
         public CharacterInstance Player { get; private set; }
+
+        /// <summary>当前这一轮的场地与对手安排；未开局 / 清场后为 null。</summary>
+        public ArenaPlan CurrentPlan
+        {
+            get { return currentPlan; }
+        }
 
         public CharacterRoster Roster
         {
@@ -135,7 +164,7 @@ namespace Ring.Flow
                 return false;
             }
 
-            // 文档 [005]：开局随机分配特质、技能与位置。
+            // 文档 [005]：开局随机分配特质、技能（位置 / 区域由 GameFlow 随后 ApplyPlan 决定）。
             bell.Runtime.DealInitialCards();
             RefreshLoadouts();
 
@@ -146,6 +175,47 @@ namespace Ring.Flow
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// 把一轮 <see cref="ArenaPlan"/> 落到世界坐标：每个角色站到本场区域中心的左右两侧。
+        /// 复制体对决（B12，SecondId &lt; 0）暂时只摆本体，复制体由后续战斗层生成。
+        /// 同时把玩家所在的擂台中心交给 <see cref="PlayerMotor"/>，避免它被圆形边界拉回原点。
+        /// </summary>
+        public void ApplyPlan(ArenaPlan plan)
+        {
+            currentPlan = plan;
+            if (plan == null)
+            {
+                return;
+            }
+
+            for (int d = 0; d < plan.Duels.Count; d++)
+            {
+                ArenaDuel duel = plan.Duels[d];
+                Vector3 center = GetRegionCenter(duel.Map);
+
+                if (duel.SecondId >= 0)
+                {
+                    PlaceAt(duel.FirstId, center + Vector3.left * duelOffset);
+                    PlaceAt(duel.SecondId, center + Vector3.right * duelOffset);
+                }
+                else
+                {
+                    // 落单者（复制体对决 / 轮空）：站在区域中心。
+                    PlaceAt(duel.FirstId, center);
+                }
+            }
+
+            if (Player != null && plan.Contains(Player.Id))
+            {
+                Vector3 playerCenter = GetRegionCenter(plan.MapOf(Player.Id));
+                PlayerMotor motor = Player.GetComponent<PlayerMotor>();
+                if (motor != null)
+                {
+                    motor.SetArenaCenter(playerCenter);
+                }
+            }
         }
 
         /// <summary>销毁本局所有角色（回主菜单、重开时调用）。</summary>
@@ -168,6 +238,7 @@ namespace Ring.Flow
 
             instances.Clear();
             Player = null;
+            currentPlan = null;
         }
 
         /// <summary>
@@ -185,12 +256,51 @@ namespace Ring.Flow
             }
         }
 
+        /// <summary>按区域编号取世界落点；Inspector 没拖锚点时退化成 2 行 3 列的计算布局。</summary>
+        private Vector3 GetRegionCenter(BattleMapId map)
+        {
+            int index = BattleMaps.IndexOf(BattleMaps.ClampToValid(map));
+            if (regionAnchors != null && index < regionAnchors.Length && regionAnchors[index] != null)
+            {
+                return regionAnchors[index].position;
+            }
+
+            int col = index % 3;
+            int row = index / 3;
+            return new Vector3(
+                (col - 1) * arenaSpacing,
+                (0.5f - row) * arenaSpacing * 0.6f,
+                0f);
+        }
+
+        private void PlaceAt(int participantId, Vector3 worldPosition)
+        {
+            CharacterInstance character = FindById(participantId);
+            if (character != null)
+            {
+                character.transform.position = worldPosition;
+            }
+        }
+
+        private CharacterInstance FindById(int participantId)
+        {
+            for (int i = 0; i < instances.Count; i++)
+            {
+                if (instances[i] != null && instances[i].Id == participantId)
+                {
+                    return instances[i];
+                }
+            }
+
+            return null;
+        }
+
         private CharacterInstance CreateInstance(int index, CharacterBaseStats stats, int total, bool isPlayer)
         {
             var go = new GameObject("角色_" + stats.DisplayName);
             go.transform.SetParent(transform, false);
 
-            // 六边形站位：从正上方开始顺时针。
+            // 六边形站位：从正上方开始顺时针。ApplyPlan 随后会按三场 1v1 重新落位。
             float angle = 90f - 360f * index / Mathf.Max(1, total);
             float radians = angle * Mathf.Deg2Rad;
             go.transform.localPosition = new Vector3(
@@ -214,6 +324,25 @@ namespace Ring.Flow
         {
             instances.Clear();
             Player = null;
+            currentPlan = null;
+        }
+
+        private void OnValidate()
+        {
+            if (regionAnchors == null || regionAnchors.Length != BattleMaps.Count)
+            {
+                var resized = new Transform[BattleMaps.Count];
+                if (regionAnchors != null)
+                {
+                    int copy = Mathf.Min(regionAnchors.Length, resized.Length);
+                    for (int i = 0; i < copy; i++)
+                    {
+                        resized[i] = regionAnchors[i];
+                    }
+                }
+
+                regionAnchors = resized;
+            }
         }
     }
 }
