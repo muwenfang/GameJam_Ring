@@ -43,8 +43,31 @@ namespace Ring.Flow
         /// <summary>被拒绝的流转，附带原因（接日志用）。</summary>
         public event Action<string> TransitionRejected;
 
+        /// <summary>
+        /// 显式初始化完成。与 Unity 侧 <c>GameFlow.InitializeGame()</c> 配套：
+        /// 壳层销毁角色、清钟声名册，这里清状态机自身的本局数据；状态不变。
+        /// </summary>
+        public event Action GameInitialized;
+
         /// <summary>最近一次被拒绝的原因。</summary>
         public string LastRejection { get; private set; }
+
+        /// <summary>
+        /// 显式初始化：清空本局的玩家 id、参与人数与拒绝原因，**状态不变**。
+        /// 幂等，可反复调用；「返回主菜单」「再来一局」都会先走一次，保证重开不带残留数据。
+        /// 状态流转仍由 <see cref="ReturnToMenu"/> / <see cref="StartMatch"/> 负责。
+        /// </summary>
+        public void InitializeGame()
+        {
+            PlayerId = -1;
+            ParticipantCount = 0;
+            LastRejection = null;
+
+            if (GameInitialized != null)
+            {
+                GameInitialized();
+            }
+        }
 
         /// <summary>主菜单 / 胜利 / 失败 → 准备中。</summary>
         public bool StartMatch()

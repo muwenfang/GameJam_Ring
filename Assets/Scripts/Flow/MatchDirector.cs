@@ -10,9 +10,15 @@ namespace Ring.Flow
     /// 演示用推进器：没有战斗时靠它把一局「跑到底」，方便看流程与 UI 是否正常。
     ///
     /// 它做三件事：
-    /// 1）收集人设阶段——每隔一段时间给某个人机补一张牌，让 B9（有人集齐完整人设）发生；
+    /// 1）收集人设阶段——每隔一段时间优先给玩家补一张缺牌，让玩家集齐并触发 B9；
     /// 2）淘汰赛阶段——每隔一段时间处决一个人机，直到只剩玩家（胜利）；
-    /// 3）调试键——K 处决玩家（失败界面）、L 处决一个人机。
+    /// 3）调试键——K 处决玩家、L 处决一个人机。
+    ///
+    /// 为什么要优先给玩家补牌：B14 要求「集齐完整人设 + 只剩最后一人」才判胜，
+    /// 若让人机先集齐，演示会走到「玩家活到最后却没集齐 → 失败」，看不到胜利界面。
+    ///
+    /// 注意：收集阶段按 B8 死亡只满血复活，所以 K 键在收集阶段看不到失败界面；
+    /// 想看失败界面请在淘汰赛阶段按 K。
     ///
     /// 真正的战斗接进来之后，把这个组件关掉（enabled = false）即可，流程与 UI 都不依赖它。
     /// </summary>
@@ -122,7 +128,7 @@ namespace Ring.Flow
             }
         }
 
-        /// <summary>给随机一个人机补一张他缺的牌，然后敲一次钟让 B9 有机会触发。</summary>
+        /// <summary>优先给玩家补一张缺的牌（B14 需要玩家集齐），然后敲一次钟让 B9 有机会触发。</summary>
         private void GiftOneCard()
         {
             MatchSpawner spawner = gameFlow.Spawner;
@@ -131,22 +137,34 @@ namespace Ring.Flow
                 return;
             }
 
-            var candidates = new List<CharacterInstance>();
-            for (int i = 0; i < spawner.Instances.Count; i++)
+            // B14：胜利同时要求「集齐完整人设」和「只剩最后一人」。
+            // 演示必须先让玩家集齐（集齐后按 B13 豁免，不会被钟声洗掉），
+            // 否则淘汰赛打到只剩玩家时会被判「未集齐 → 失败」，永远看不到胜利界面。
+            CharacterInstance target = gameFlow.Player;
+            if (target != null && target.HasCompleteSet)
             {
-                CharacterInstance character = spawner.Instances[i];
-                if (character != null && !character.IsPlayer && !character.HasCompleteSet)
+                target = null;
+            }
+
+            if (target == null)
+            {
+                var candidates = new List<CharacterInstance>();
+                for (int i = 0; i < spawner.Instances.Count; i++)
                 {
-                    candidates.Add(character);
+                    CharacterInstance character = spawner.Instances[i];
+                    if (character != null && !character.IsPlayer && !character.HasCompleteSet)
+                    {
+                        candidates.Add(character);
+                    }
                 }
-            }
 
-            if (candidates.Count == 0)
-            {
-                return;
-            }
+                if (candidates.Count == 0)
+                {
+                    return;
+                }
 
-            CharacterInstance target = candidates[Random.Range(0, candidates.Count)];
+                target = candidates[Random.Range(0, candidates.Count)];
+            }
             if (!GiveMissingCard(target.Participant))
             {
                 return;

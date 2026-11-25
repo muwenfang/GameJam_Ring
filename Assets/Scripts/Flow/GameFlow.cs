@@ -267,6 +267,12 @@ namespace Ring.Flow
             // 设置面板可能把 timeScale 留在 0；重开必须恢复正常时间流速。
             Time.timeScale = 1f;
 
+            // 状态机自身的本局数据（玩家 id / 人数 / 拒绝原因）也一并清掉。
+            if (Flow != null)
+            {
+                Flow.InitializeGame();
+            }
+
             if (GameInitialized != null)
             {
                 GameInitialized();
@@ -282,6 +288,12 @@ namespace Ring.Flow
         public bool StartMatch()
         {
             ResolveDependencies();
+
+            // 先判状态再清场：避免在局中误调 StartMatch 时「清了场却没开局」，把状态卡死。
+            if (Flow == null || !Flow.State.CanStartMatch())
+            {
+                return false;
+            }
 
             // 需求：游戏结束后点击返回、重新开始游戏后需要 initializeGame。
             // 放在最前面，保证从主菜单 / 胜利 / 失败 / 甚至局中重开都不会带上残留状态。
