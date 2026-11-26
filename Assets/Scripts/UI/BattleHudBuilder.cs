@@ -13,6 +13,7 @@ namespace Ring.UI
     ///
     /// 尺寸按 1920×1080 参考分辨率给（与 <see cref="UiBuilder.CreateCanvas"/> 的 CanvasScaler 一致），
     /// 左右两块各 820 宽、中间 200 宽，留出 28 的边距，互不重叠。
+    /// 纵向：左右两块不贴屏幕顶，下移到「血条底边」与「中间倒计时底牌底边」齐平（见 <see cref="SideTopInset"/>）。
     /// </summary>
     public static class BattleHudBuilder
     {
@@ -24,6 +25,17 @@ namespace Ring.UI
         private const float TraitBoxHeight = 84f;
         private const float TraitBoxTop = 78f;
         private const float BadgeSize = 112f;
+
+        /// <summary>中间倒计时那一列的顶边距屏幕顶的距离。</summary>
+        private const float CenterTopInset = 8f;
+
+        /// <summary>
+        /// 左右两侧根物体的顶边距屏幕顶的距离：血条不贴顶，让「血条底边」与「倒计时底牌底边」齐平。
+        /// 推导（单位均为 1920×1080 参考像素）：底牌底边距顶 = CenterTopInset + BadgeSize = 120；
+        /// 血条底边距侧块顶 = BarTop + BarHeight = 68；故侧块顶边距顶 = 120 - 68 = 52。
+        /// 想整体上下挪只改这个数；场景里对应 Player / Opponent 的 RectTransform 的 Pos Y（取负值，即 -52）。
+        /// </summary>
+        private const float SideTopInset = CenterTopInset + BadgeSize - BarTop - BarHeight;
 
         /// <summary>左右两块各占屏幕宽度的这一比例（1920 下约 820 像素），窄屏也不会挤到中间。</summary>
         private const float SideWidthRatio = 0.44f;
@@ -39,8 +51,8 @@ namespace Ring.UI
             var hud = root.gameObject.AddComponent<BattleHud>();
 
             var parts = new BattleHudParts();
-            BuildSide(root, "Player", true, new Vector2(Margin, -16f), ref parts);
-            BuildSide(root, "Opponent", false, new Vector2(-Margin, -16f), ref parts);
+            BuildSide(root, "Player", true, new Vector2(Margin, -SideTopInset), ref parts);
+            BuildSide(root, "Opponent", false, new Vector2(-Margin, -SideTopInset), ref parts);
             BuildCenter(root, ref parts);
             BuildDetail(root, ref parts);
 
@@ -175,7 +187,7 @@ namespace Ring.UI
             RectTransform center = CreateRect(
                 root, "Center",
                 new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
-                new Vector2(0f, -8f), new Vector2(200f, 180f));
+                new Vector2(0f, -CenterTopInset), new Vector2(200f, 180f));
 
             RectTransform badge = CreateRect(
                 center, "BellBadge",

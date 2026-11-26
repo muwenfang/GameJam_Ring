@@ -1,3 +1,4 @@
+using Ring.Abilities;
 using Ring.Core;
 using UnityEngine;
 
@@ -145,9 +146,16 @@ namespace Ring.Characters
         {
             bool changed = false;
 
-            if (includeDocumentedExceptions || !CharacterBalance.HasDocumentedException(persona))
+            BalanceDecision decision = CharacterBalance.ActiveDecision;
+            // 默认回填跳过「登记了覆盖值」的人设（保留 Q1 的 12.5%）；
+            // 但策略切到 FormulaOnly 时，即使有覆盖也一律按公式 —— 由资产策略决定，不改代码。
+            bool keepOverride = !includeDocumentedExceptions
+                                && decision.Policy != ReductionPolicy.FormulaOnly
+                                && decision.HasOverride(persona);
+
+            if (!keepOverride)
             {
-                float reduction = CharacterBalance.ReductionFromDefense(defense);
+                float reduction = decision.ResolveReduction(persona, defense);
                 if (!CharacterBalance.Approximately(damageReduction, reduction))
                 {
                     damageReduction = reduction;
@@ -241,14 +249,19 @@ namespace Ring.Characters
             CheckAgainstDocument(context, report);
         }
 
-        /// <summary>校验减伤/移速是否符合文档公式。</summary>
+        /// <summary>
+        /// 校验减伤/移速是否符合「当前资产决策」解析出来的值。
+        /// Q1 的特例不再是这里一条含糊的 Warn：它由 BalanceDecision.CollectIssues 带依据地报 Info，
+        /// 而本处只在「实际配置与策略解析值不符」时才报警，避免把刻意保留的文档值误判成错误。
+        /// </summary>
         private void CheckAgainstFormula(string context, ValidationReport report)
         {
-            float expectedReduction = CharacterBalance.ReductionFromDefense(defense);
+            float expectedReduction = CharacterBalance.ReductionFor(persona, defense);
             if (!CharacterBalance.Approximately(damageReduction, expectedReduction))
             {
-                report.Warn(context, "减伤 " + Percent(damageReduction) + " 与公式 防御/500 = " + Percent(expectedReduction)
-                    + " 不一致（防御 " + defense + "）。文档对精灵游侠 12.5% 有 ⚠️ 标注，若是刻意保留可忽略。");
+                report.Warn(context, "减伤 " + Percent(damageReduction) + " 与当前策略解析值 " + Percent(expectedReduction)
+                    + " 不一致（防御 " + defense + "，策略 " + CharacterBalance.ActiveDecision.Policy
+                    + "）。若是有意的 Q1 特例，请在 AbilityTuning.asset 的覆盖表里登记，而不是靠校验器放行。");
             }
 
             float expectedMove = CharacterBalance.CellsPerSecondFromSpeed(speed);

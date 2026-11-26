@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Ring.Abilities;
 using Ring.Bells;
 using Ring.Maps;
 using UnityEngine;
@@ -39,6 +40,11 @@ namespace Ring.Flow
         [SerializeField]
         [Tooltip("钟声系统；留空时自动用场景里的 BellSystem。")]
         private BellSystem bellSystem;
+
+        [Header("数值层（M1：改表不改码）")]
+        [SerializeField]
+        [Tooltip("技能数值总表。拖入 Assets/Data/Abilities/AbilityTuning.asset 后，30 条技能数值、effectRefs 与 Q1 减伤决策改表即生效；留空则回退代码种子。")]
+        private AbilityTuningAsset abilityTuning;
 
         [Header("胜利条件（B14）")]
         [SerializeField]
@@ -184,6 +190,11 @@ namespace Ring.Flow
             }
 
             instance = this;
+
+            // 数值层必须在任何角色生成之前注入：这是「改表不改码」的唯一接线点。
+            // 拖了资产就读资产，没拖就走代码种子（行为与改造前一致）。
+            ApplyNumericLayer();
+
             Flow = new MatchFlow { RequireCompleteSetForVictory = requireCompleteSetForVictory };
             Flow.StateChanged += HandleFlowStateChanged;
             Flow.MatchFinished += HandleMatchFinished;
@@ -375,6 +386,39 @@ namespace Ring.Flow
             return Flow.ReturnToMenu();
         }
 
+        /// <summary>
+        /// 「开始游戏」按钮专用：Unity 的 OnClick 下拉只列出返回 void 的无参方法，
+        /// bool 版 <see cref="StartMatch"/> 不会出现在列表里；此包装转成 void，并把结果打进日志。
+        /// </summary>
+        public void StartMatchFromUi()
+        {
+            if (StartMatch())
+            {
+                return;
+            }
+
+            string reason = Flow != null && !string.IsNullOrEmpty(Flow.LastRejection)
+                ? Flow.LastRejection
+                : "当前状态不允许开局";
+            Debug.Log($"[流程] StartMatch 被拒绝：{reason}", this);
+        }
+
+        /// <summary>
+        /// 「返回主菜单」按钮专用：理由同 <see cref="StartMatchFromUi"/>，包装 bool 版 <see cref="ReturnToMenu"/>。
+        /// </summary>
+        public void ReturnToMenuFromUi()
+        {
+            if (ReturnToMenu())
+            {
+                return;
+            }
+
+            string reason = Flow != null && !string.IsNullOrEmpty(Flow.LastRejection)
+                ? Flow.LastRejection
+                : "当前状态不允许返回主菜单";
+            Debug.Log($"[流程] ReturnToMenu 被拒绝：{reason}", this);
+        }
+
         /// <summary>把 B14 开关同步进状态机（Inspector 改动后调用）。</summary>
         public void ApplySettings()
         {
@@ -383,6 +427,25 @@ namespace Ring.Flow
                 Flow.RequireCompleteSetForVictory = requireCompleteSetForVictory;
             }
         }
+
+        /// <summary>
+        /// 重新注入数值资产。Editor 里改完 .asset 后不重启 PlayMode 也可调用刷新；
+        /// 未指定资产时回退代码种子 + 文档默认 Q1 决策，保证行为确定。
+        /// </summary>
+        public void ApplyNumericLayer()
+        {
+            if (abilityTuning != null)
+            {
+                abilityTuning.Apply();
+            }
+            else
+            {
+                AbilityTuningAsset.ApplyFromResourcesOrDefault();
+            }
+        }
+
+        /// <summary>当前生效的技能数值资产（未拖入时为 null，此时走代码种子）。</summary>
+        public AbilityTuningAsset AbilityTuning => abilityTuning;
 
         // ---------- 角色死亡 ----------
 

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Ring.Characters;
 using Ring.Core;
 
@@ -172,6 +173,15 @@ namespace Ring.Abilities
         // ---------- 备注 ----------
         public string Notes = string.Empty;
 
+        // ---------- 效果引用（effectRefs → 执行器映射） ----------
+        /// <summary>
+        /// 该能力用到的 13 类效果原语组合，即架构文档 §6 里的 <c>effectRefs[]</c>。
+        /// 纯数据、资产里可增删改；运行时由 <see cref="AbilityExecutorRegistry"/> 按
+        /// <see cref="AbilityEffectRef.EffectId"/> 解析成执行器，因此「改效果组合」不改代码。
+        /// 代码种子构建的实例默认为空列表，<see cref="AbilityCatalog.CreateSeedDefinitions"/> 会按字段自动推导填好。
+        /// </summary>
+        public List<AbilityEffectRef> EffectRefs = new List<AbilityEffectRef>();
+
         /// <summary>是否是常驻被动。</summary>
         public bool IsPassive
         {
@@ -258,6 +268,35 @@ namespace Ring.Abilities
             TriggerWindowSeconds = other.TriggerWindowSeconds;
             StunResistanceSeconds = other.StunResistanceSeconds;
             Notes = other.Notes;
+            EffectRefs = CloneEffectRefs(other.EffectRefs);
+        }
+
+        private static List<AbilityEffectRef> CloneEffectRefs(List<AbilityEffectRef> source)
+        {
+            var copy = new List<AbilityEffectRef>();
+            if (source == null)
+            {
+                return copy;
+            }
+
+            for (int i = 0; i < source.Count; i++)
+            {
+                copy.Add(source[i] != null ? source[i].Clone() : null);
+            }
+
+            return copy;
+        }
+
+        /// <summary>该能力的效果原语摘要（Editor 列表与文档生成用）。</summary>
+        public string ToEffectSummary()
+        {
+            return AbilityEffectRefs.ToSummary(this);
+        }
+
+        /// <summary>把全部 effectRefs 解析成执行器实例，供战斗层与校验工具消费。</summary>
+        public IReadOnlyList<AbilityEffectInstance> DescribeEffects()
+        {
+            return AbilityExecutorRegistry.DescribeAll(this);
         }
 
         /// <summary>技能卡上显示的名字：「剑客·本我 突进斩」。</summary>
@@ -421,6 +460,29 @@ namespace Ring.Abilities
             if (MoveSpeedMultiplier > 0f && AbilityMath.Approximately(MoveSpeedMultiplier, 1f))
             {
                 report.Info(context, "移速倍率填了 1（等于没有修正），可以留 0。");
+            }
+
+            // effectRefs → 执行器映射的合法性：ID 必须属于 13 类原语，且必须有已登记的执行器。
+            // 代码种子的 definitions 默认是空列表（未推导），此时不产生任何提示，保证既有回归不变。
+            if (EffectRefs != null)
+            {
+                var seenEffects = new HashSet<AbilityEffectId>();
+                for (int i = 0; i < EffectRefs.Count; i++)
+                {
+                    AbilityEffectRef reference = EffectRefs[i];
+                    if (reference == null)
+                    {
+                        report.Error(context, "effectRefs[" + i + "] 为空。");
+                        continue;
+                    }
+
+                    reference.CollectIssues(report, context + "·effectRefs[" + i + "]");
+                    if (AbilityEffectIds.IsDefined(reference.EffectId) && !seenEffects.Add(reference.EffectId))
+                    {
+                        report.Warn(context, "效果原语「" + AbilityEffectIds.ToDisplayName(reference.EffectId)
+                            + "」被重复引用，通常合并成一条即可。");
+                    }
+                }
             }
         }
     }

@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Text;
 using Ring.Abilities;
 using Ring.Bells;
@@ -119,28 +119,9 @@ namespace Ring.UI
 
         [Header("文案")]
         [SerializeField]
-        [Tooltip("左侧名字的固定文案（设计稿写的是「玩家」）。")]
-        private string playerTitle = "玩家";
-
-        [SerializeField]
-        [Tooltip("右侧名字的固定文案（设计稿写的是「对手」）。")]
-        private string opponentTitle = "对手";
-
-        [SerializeField]
-        [Tooltip("勾上后名字后面会跟人设名，例如「玩家 · 剑客」。")]
-        private bool appendCharacterName;
-
-        [SerializeField]
         [Tooltip("特性栏为空时的占位文案（设计稿写的是「状态栏」）。")]
         private string traitBoxEmptyText = "状态栏";
 
-        [SerializeField]
-        [Tooltip("回合文案格式：{0}=当前回合，{1}=总回合。总回合设为 0 时只显示 {0}。")]
-        private string roundFormat = "回合 {0} / {1}";
-
-        [SerializeField]
-        [Tooltip("回合总数；0 表示不显示总数。当前回合 = 已敲响钟声次数 + 1。")]
-        private int roundTotal = 3;
 
         [SerializeField]
         [Tooltip("血条上的数值格式：{0}=当前生命，{1}=最大生命。")]
@@ -683,9 +664,6 @@ namespace Ring.UI
 
             opponent = PickOpponent();
 
-            RefreshName(playerName, playerTitle, player);
-            RefreshName(opponentName, opponentTitle, opponent);
-
             RefreshBar(playerBarFill, playerBarValue, player, true, false);
             RefreshBar(opponentBarFill, opponentBarValue, opponent, false, false);
 
@@ -701,15 +679,6 @@ namespace Ring.UI
             if (label == null)
             {
                 return;
-            }
-
-            if (appendCharacterName && character != null)
-            {
-                label.text = title + " · " + character.DisplayName;
-            }
-            else
-            {
-                label.text = title;
             }
 
             if (label.GetComponent<Outline>() == null)
@@ -813,10 +782,6 @@ namespace Ring.UI
             BellSystem bells = gameFlow != null ? gameFlow.Bells : null;
             int current = bells != null && bells.Runtime != null ? bells.Runtime.SequenceNumber + 1 : 1;
 
-            roundValue.text = roundTotal > 0
-                ? string.Format(roundFormat, current, roundTotal)
-                : "回合 " + current;
-
             roundValue.color = roundColor;
             if (roundValue.GetComponent<Outline>() == null)
             {
@@ -867,7 +832,7 @@ namespace Ring.UI
             if (player != null)
             {
                 DerivedAbilityStats derived = player.Derived;
-                builder.Append('\n').Append(playerTitle).Append('：').Append(player.DisplayName)
+                builder.Append('\n').Append('：').Append(player.DisplayName)
                     .Append("　生命 ").Append(Mathf.CeilToInt(player.CurrentHealth)).Append('/')
                     .Append(Mathf.CeilToInt(player.MaxHealth))
                     .Append("　防御 ").Append(Mathf.RoundToInt(derived.Defense))

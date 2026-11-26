@@ -32,6 +32,16 @@ namespace Ring.Flow
         [Tooltip("是否把施放与命中结果打印到 Console。")]
         private bool logCasts = true;
 
+        [SerializeField]
+        [Tooltip("D12：施放超我（游侠「缚地荆棘」是唯一鼠标指定位置技能）时，把本帧选点格记进日志与 LastAimCell。只做记录，不改任何伤害数值。")]
+        private bool logAimPointForSuperego = true;
+
+        /// <summary>最近一次超我施放时采到的选点格（供 HUD / M3 命中判定读取）。</summary>
+        public Ring.Inputs.GridCoord LastAimCell { get; private set; }
+
+        /// <summary><see cref="LastAimCell"/> 是否已经采到过有效值。</summary>
+        public bool HasLastAimCell { get; private set; }
+
         private CharacterInstance instance;
 
         private Ring.Characters.SwordsmanSpriteAnimation swordAnimation;
@@ -109,6 +119,27 @@ namespace Ring.Flow
                 ExecuteSwordsmanDash(activation.Definition);
             }
 
+            // D12：超我槽是「鼠标指定位置」技能的落点（游侠·缚地荆棘）。
+            // 这里只把 Intent.aimPoint 记下来并打印，命中判定与伤害仍走原有逻辑，
+            // 等 M3 真正实现 3×1 荆棘地形时直接读 LastAimCell / Intent.AimCell 即可。
+            string aimNote = string.Empty;
+            if (slot == AbilitySlot.Superego && logAimPointForSuperego)
+            {
+                Ring.Inputs.GameInput input = Ring.Inputs.GameInput.Instance;
+                if (input != null && input.HasValidAim)
+                {
+                    Ring.Inputs.GridCoord cell = input.AimCell;
+                    LastAimCell = cell;
+                    HasLastAimCell = true;
+                    aimNote = "，选点 格" + cell + "（世界 " + input.AimWorldPoint.ToString("F2")
+                              + (input.AimInsideGrid ? string.Empty : "，地图外") + "）";
+                }
+                else
+                {
+                    aimNote = "，选点无效（相机未指派 / 鼠标压在 UI 上）";
+                }
+            }
+
             if (logCasts)
             {
                 var definition = activation.Definition;
@@ -116,7 +147,7 @@ namespace Ring.Flow
                     + "（冷却 " + AbilityMath.Number(activation.CooldownSeconds) + "s"
                     + (activation.HealAmount > 0f ? "，治疗 " + AbilityMath.Number(activation.HealAmount) : string.Empty)
                     + (activation.ShieldAmount > 0f ? "，护盾 " + AbilityMath.Number(activation.ShieldAmount) : string.Empty)
-                    + "）", this);
+                    + "）" + aimNote, this);
             }
 
             return true;

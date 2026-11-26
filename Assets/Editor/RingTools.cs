@@ -75,6 +75,19 @@ namespace Ring.EditorTools
                 bellSettings.CollectIssues(report);
             }
 
+            // 数值层（M1）：30 条技能数值、effectRefs → 执行器映射、Q1 决策一并校验。
+            AbilityTuningAsset tuning = AssetDatabase.LoadAssetAtPath<AbilityTuningAsset>(
+                AbilityTuningAsset.DefaultAssetPath);
+            if (tuning == null)
+            {
+                report.Warn("数值层", "找不到 " + AbilityTuningAsset.DefaultAssetPath
+                    + "；运行时会回退代码种子，「改表不改码」尚未接线。请用「钟声/数值层/从代码种子生成技能数值资产」。");
+            }
+            else
+            {
+                tuning.CollectIssues(report);
+            }
+
             Debug.Log("【钟声】数据校验\n" + report.ToText());
 
             string headline = report.IsClean
@@ -125,6 +138,8 @@ namespace Ring.EditorTools
         public static void ValidateAbilities()
         {
             var report = new ValidationReport();
+            report.Info("技能总表", "当前数值来源：" + AbilityCatalog.SourceName
+                + (AbilityCatalog.IsUsingSeed ? "（代码种子，未注入 .asset）" : "（Inspector 资产，改表即生效）"));
             AbilityCatalog.CollectIssues(report);
 
             CharacterRoster roster = AssetDatabase.LoadAssetAtPath<CharacterRoster>(CharacterRosterPath);

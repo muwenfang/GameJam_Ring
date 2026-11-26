@@ -87,8 +87,10 @@ namespace Ring.Abilities
                 case PersonaId.Spartan:
                     return new CharacterStatBlock(persona, 116f, 120f, 0.24f, 72f, 2.16f, 2f, 0.9f);
                 case PersonaId.Ranger:
-                    // 文档自己标注的特例：防御 75 按公式是 15%，表里写 12.5%。
-                    return new CharacterStatBlock(persona, 75f, 75f, 0.125f, 110f, 3.3f, 2f, 0.6f);
+                    // Q1：减伤统一由 BalanceDecision 的文档默认决策解析（当前 12.5%，公式 15%），
+                    // 这里不再保留第二份硬编码真源；改策略只需改资产。
+                    return new CharacterStatBlock(persona, 75f, 75f,
+                        BalanceDecision.DocumentDefault.ResolveReduction(persona, 75f), 110f, 3.3f, 2f, 0.6f);
                 case PersonaId.Clockmaker:
                     return new CharacterStatBlock(persona, 96f, 96f, 0.192f, 108f, 3.24f, 2f, 0.8f);
                 case PersonaId.Strongman:

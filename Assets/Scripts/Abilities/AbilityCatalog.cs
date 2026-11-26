@@ -7,16 +7,19 @@ using Ring.Core;
 namespace Ring.Abilities
 {
     /// <summary>
-    /// 六人设 × 五槽位 = 30 条能力的默认数值表，完全按《技能表.txt》抄录。
+    /// 技能数值的**唯一门面**：全系统（<see cref="AbilityCard.Definition"/>、AbilityRuntime、
+    /// Editor 校验、HUD）取数值都只经过这里。
     ///
-    /// 为什么放在代码里而不是 .asset：
-    ///   1. 技能数是固定的 30 条，且每条字段很多、互相引用（属性/层数/控制），
-    ///      写在代码里能编译期发现拼错，也能被离线测试直接验证；
-    ///   2. 策划要调参时用 <c>Assets/Data/Abilities/AbilityTuning.asset</c> 覆盖（见 AbilityTuning），
-    ///      不必改动这张表，也不必把 30 条字段全部手写进 YAML。
+    /// 数值真源已按 M1 验收标准「改表不改码」资产化：
+    ///   · <c>Assets/Data/Abilities/AbilityTuning.asset</c> 是策划在 Inspector 里改的表，
+    ///     启动时由 <c>AbilityTuningAsset.Apply()</c> 通过 <see cref="SetSource"/> 注入；
+    ///   · 本文件里 30 条 <c>BuildAll()</c> 降级为**代码种子**：只用于生成资产、离线测试、
+    ///     以及资产缺失时的确定性回退，不再是运行时真源；
+    ///   · 所有既有 API（Get / TryGet / All / GetPersona / GetSlot / CollectIssues / ToOverview）
+    ///     签名保持不变，因此离线回归与战斗层无需改动。
     ///
     /// 注意：普攻槽的数值也在这张表里。角色资产上的 <c>BasicAttackProfile</c> 是旧版身体级镜像，
-    /// 新代码以本表为准（两者不一致时 Editor 校验会给 Info 提示）。
+    /// 新代码以本门面为准（两者不一致时 Editor 校验会给 Info 提示）。
     /// </summary>
     public static class AbilityCatalog
     {
@@ -26,12 +29,58 @@ namespace Ring.Abilities
         /// <summary>能力总数 = 6 人设 × 5 槽位。</summary>
         public const int TotalCount = 30;
 
-        private static readonly AbilityDefinition[] Definitions = BuildAll();
+        /// <summary>代码种子（30 条默认值）。只在生成资产 / 离线测试 / 缺资产回退时使用。</summary>
+        private static readonly IAbilityCatalogSource Seed =
+            new AbilityDefinitionListSource(BuildAll(), "代码种子");
+
+        private static IAbilityCatalogSource current = Seed;
+
+        /// <summary>当前生效的数值来源。</summary>
+        public static IAbilityCatalogSource Source => current;
+
+        /// <summary>当前是否走代码种子（资产未注入）。</summary>
+        public static bool IsUsingSeed => ReferenceEquals(current, Seed);
+
+        /// <summary>当前来源名，日志用。</summary>
+        public static string SourceName => current.SourceName;
+
+        /// <summary>
+        /// 注入一份数值表（通常是资产转出来的 <see cref="AbilityDefinitionListSource"/>）。
+        /// 传 null 等价于 <see cref="ResetToSeed"/>。
+        /// </summary>
+        public static void SetSource(IAbilityCatalogSource source)
+        {
+            current = source ?? Seed;
+        }
+
+        /// <summary>恢复到代码种子（域重载 / 退出 PlayMode / 测试隔离时用）。</summary>
+        public static void ResetToSeed()
+        {
+            current = Seed;
+        }
+
+        /// <summary>只读的种子快照，不要修改其中元素。</summary>
+        public static IReadOnlyList<AbilityDefinition> SeedDefinitions => Seed.All;
+
+        /// <summary>
+        /// 重新构建一份**可修改**的种子副本（每条都 Clone 并填好 effectRefs）。
+        /// 资产生成器与 Editor 菜单「从代码种子重建」用这个，避免污染静态种子。
+        /// </summary>
+        public static List<AbilityDefinition> CreateSeedDefinitions()
+        {
+            var list = new List<AbilityDefinition>(BuildAll());
+            for (int i = 0; i < list.Count; i++)
+            {
+                list[i].EffectRefs = AbilityEffectRefs.InferFrom(list[i]);
+            }
+
+            return list;
+        }
 
         /// <summary>全部 30 条，顺序为「人设 → 槽位」。</summary>
         public static IReadOnlyList<AbilityDefinition> All
         {
-            get { return Definitions; }
+            get { return current.All; }
         }
 
         /// <summary>按 (人设, 槽位) 取定义，找不到返回 null。</summary>
@@ -44,18 +93,7 @@ namespace Ring.Abilities
         /// <summary>按 (人设, 槽位) 取定义。</summary>
         public static bool TryGet(PersonaId persona, AbilitySlot slot, out AbilityDefinition definition)
         {
-            for (int i = 0; i < Definitions.Length; i++)
-            {
-                AbilityDefinition candidate = Definitions[i];
-                if (candidate.Persona == persona && candidate.Slot == slot)
-                {
-                    definition = candidate;
-                    return true;
-                }
-            }
-
-            definition = null;
-            return false;
+            return current.TryGet(persona, slot, out definition);
         }
 
         /// <summary>取某个人设的五个能力（顺序同 <see cref="AbilitySlots.All"/>）。</summary>
@@ -106,9 +144,10 @@ namespace Ring.Abilities
 
             const string context = "技能总表";
 
-            if (Definitions.Length != TotalCount)
+            IReadOnlyList<AbilityDefinition> definitions = current.All;
+            if (definitions.Count != TotalCount)
             {
-                report.Error(context, "应有 " + TotalCount + " 条能力，实际 " + Definitions.Length + " 条。");
+                report.Error(context, "应有 " + TotalCount + " 条能力，实际 " + definitions.Count + " 条。");
             }
 
             for (int i = 0; i < PersonaIds.Count; i++)
@@ -124,9 +163,9 @@ namespace Ring.Abilities
             }
 
             var seen = new HashSet<string>();
-            for (int i = 0; i < Definitions.Length; i++)
+            for (int i = 0; i < definitions.Count; i++)
             {
-                AbilityDefinition definition = Definitions[i];
+                AbilityDefinition definition = definitions[i];
                 string key = (int)definition.Persona + ":" + (int)definition.Slot;
                 if (!seen.Add(key))
                 {
@@ -141,8 +180,8 @@ namespace Ring.Abilities
         public static string ToOverview()
         {
             var builder = new StringBuilder();
-            builder.Append("能力总表：").Append(Definitions.Length).Append(" 条（").Append(PersonaIds.Count)
-                .Append(" 人设 × ").Append(SlotsPerPersona).Append(" 槽）");
+            builder.Append("能力总表：").Append(current.All.Count).Append(" 条（").Append(PersonaIds.Count)
+                .Append(" 人设 × ").Append(SlotsPerPersona).Append(" 槽）｜来源：").Append(current.SourceName);
 
             for (int s = 0; s < AbilitySlots.Count; s++)
             {

@@ -1,3 +1,4 @@
+using Ring.Abilities;
 using UnityEngine;
 
 namespace Ring.Characters
@@ -9,30 +10,48 @@ namespace Ring.Characters
     /// 依据《数据和结构.txt》「六人设基础数值总表」：
     ///   减伤    = 防御 / 500        （70→14%，82→16.4%，120→24%，96→19.2%，90→18%）
     ///   移速    = 速度 * 0.03 格/s  （130→3.9，108→3.24，72→2.16，110→3.3，90→2.7）
-    /// 精灵游侠是唯一例外：表里写 12.5%，按公式应为 15%（文档自己用 ⚠️ 标注了这条）。
-    /// 因此减伤与移速都做成 Inspector 可写字段，公式只用于校验与一键回填。
+    ///
+    /// Q1（游侠 12.5% vs 公式 15%）已从「本类里一句硬编码判断」升级为
+    /// <see cref="BalanceDecision"/>：公式除数、策略、特例覆盖表都在
+    /// <c>AbilityTuning.asset</c> 里配置，本类只保留代码种子默认值并委托给运行时决策。
+    /// 因此「策划改主意」不再需要改 C# 代码。
     /// </summary>
     public static class CharacterBalance
     {
-        /// <summary>每 500 点防御提供 100% 减伤，即 1 点防御 = 0.2% 减伤。</summary>
+        /// <summary>代码种子默认：每 500 点防御提供 100% 减伤。实际生效值以资产决策为准。</summary>
         public const float DefenseToReductionDivisor = 500f;
 
-        /// <summary>速度到移速（格/秒）的换算系数。</summary>
+        /// <summary>代码种子默认：速度到移速（格/秒）的换算系数。</summary>
         public const float SpeedToCellsPerSecond = 0.03f;
 
-        /// <summary>浮点比较容差，用于判断 Inspector 里的值与公式是否一致。</summary>
+        /// <summary>代码种子默认容差。</summary>
         public const float Tolerance = 0.0005f;
 
+        /// <summary>当前生效的换算决策（来自资产，未注入时为文档默认）。</summary>
+        public static BalanceDecision ActiveDecision => BalanceDecisionRuntime.Active;
+
+        /// <summary>注入一份换算决策（由 <c>AbilityTuningAsset.Apply()</c> 调用）。</summary>
+        public static void Configure(BalanceDecision decision)
+        {
+            BalanceDecisionRuntime.Configure(decision);
+        }
+
+        /// <summary>恢复文档默认决策。</summary>
+        public static void ResetToDefault()
+        {
+            BalanceDecisionRuntime.ResetToDefault();
+        }
+
         /// <summary>
-        /// 文档自己标注过的特例：精灵游侠的减伤写的是 12.5%，而公式给 15%。
-        /// 一键回填与公式校验都要放过这一类人设，否则会把策划的定稿值改掉。
+        /// 是否登记了「减伤覆盖值」。过去这里硬编码 <c>persona == Ranger</c>，
+        /// 现在由资产里的覆盖表决定；换特例 / 加特例都不用改代码。
         /// </summary>
         public static bool HasDocumentedException(PersonaId persona)
         {
-            return persona == PersonaId.Ranger;
+            return ActiveDecision.HasOverride(persona);
         }
 
-        /// <summary>按文档公式由防御推算减伤（0~1）。</summary>
+        /// <summary>按纯公式由防御推算减伤（0~1），不看覆盖表。</summary>
         public static float ReductionFromDefense(float defense)
         {
             if (defense <= 0f)
@@ -40,13 +59,19 @@ namespace Ring.Characters
                 return 0f;
             }
 
-            return Mathf.Clamp01(defense / DefenseToReductionDivisor);
+            return ActiveDecision.ReductionFromDefense(defense);
+        }
+
+        /// <summary>按当前策略解析某人设的最终减伤（含 Q1 覆盖）。</summary>
+        public static float ReductionFor(PersonaId persona, float defense)
+        {
+            return ActiveDecision.ResolveReduction(persona, defense);
         }
 
         /// <summary>按文档公式由速度推算移速（格/秒）。</summary>
         public static float CellsPerSecondFromSpeed(float speed)
         {
-            return Mathf.Max(0f, speed) * SpeedToCellsPerSecond;
+            return ActiveDecision.ResolveMoveSpeed(speed);
         }
 
         /// <summary>防御减伤后的实际伤害；减伤 0.14 表示吃 86%。</summary>
@@ -58,7 +83,7 @@ namespace Ring.Characters
         /// <summary>容差比较，避免 0.164f 这类十进制字面量的微小误差被判成不一致。</summary>
         public static bool Approximately(float a, float b)
         {
-            return Mathf.Abs(a - b) <= Tolerance;
+            return Mathf.Abs(a - b) <= ActiveDecision.Tolerance;
         }
     }
 
@@ -181,7 +206,8 @@ namespace Ring.Characters
                 TraitName = "精灵之目",
                 MaxHealth = 75f,
                 Defense = 75f,
-                DamageReduction = 0.125f, // 文档值；公式值为 0.15，见 Notes
+                // Q1：不在这里再写死 0.125，改由文档默认决策解析（当前为 12.5%，公式值为 15%）。
+                DamageReduction = BalanceDecision.DocumentDefault.ResolveReduction(PersonaId.Ranger, 75f),
                 Speed = 110f,
                 MoveSpeedCellsPerSecond = 3.3f,
                 AttackIntervalSeconds = 0.6f,

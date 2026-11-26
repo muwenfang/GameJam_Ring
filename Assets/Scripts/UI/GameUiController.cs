@@ -445,15 +445,15 @@ namespace Ring.UI
                 DisableRaycast(FindComponent<Image>(root, SettingsBackdropName), "它在全屏按钮之前绘制，会挡住全屏按钮");
             }
 
-            if (hideEmptyBackdrops)
-            {
-                HideEmptyBackdrop(
-                    FindComponent<Image>(root, MenuBackdropName),
-                    "它排在主菜单最后、又铺满全屏，会把开始/设置/退出三个按钮整块盖住");
-                HideEmptyBackdrop(
-                    FindComponent<Image>(root, SettingsBackdropName),
-                    "它排在「全屏」按钮后面，会把全屏按钮整块盖住");
-            }
+            //if (hideEmptyBackdrops)
+            //{
+            //    HideEmptyBackdrop(
+            //        FindComponent<Image>(root, MenuBackdropName),
+            //        "它排在主菜单最后、又铺满全屏，会把开始/设置/退出三个按钮整块盖住");
+            //    HideEmptyBackdrop(
+            //        FindComponent<Image>(root, SettingsBackdropName),
+            //        "它排在「全屏」按钮后面，会把全屏按钮整块盖住");
+            //}
 
             // 场景里 SettingPanel 是存成开着的，运行时先收起来。
             HideSettings();
@@ -600,6 +600,16 @@ namespace Ring.UI
 #else
             Application.Quit();
 #endif
+        }
+
+        /// <summary>
+        /// 「退出游戏」按钮专用：Unity 的 OnClick 下拉只列出返回 void 的 public 无参方法，
+        /// private 的 <see cref="HandleExitClicked"/> 选不到；此包装供 Inspector 直接拖绑。
+        /// 若按钮已按名字「Exit」被运行时自动绑定，点击会触发两次退出 —— Quit 幂等，无副作用。
+        /// </summary>
+        public void ExitGameFromUi()
+        {
+            HandleExitClicked();
         }
 
         private void HandleFullScreenClicked()
