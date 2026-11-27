@@ -16,6 +16,14 @@ namespace Ring.Combat
         public bool DisableIdSkill;
         public bool KnockbackImmune;
         public bool Immobile;
+
+        /// <summary>
+        /// 姿态期间把平A 射程压到指定格数（0 = 不覆盖）。
+        /// 现有 AbilityRuntime 的 AttackRangeOverride 只取 Math.Max，只能加长不能缩短，
+        /// 而「单刀狂战」要求把长矛的 2 格压成 1 格，所以覆盖值放在姿态表。
+        /// </summary>
+        public float BasicAttackRangeOverride;
+
         public string EndLagStanceId = string.Empty;
         public float EndLagDuration;
         public bool ShieldOnPerfectEnd;
@@ -64,6 +72,10 @@ namespace Ring.Combat
             Id = Berserk,
             DisplayName = "单刀狂战",
             Duration = 3f,
+            // 平A 改单刀：射程 1 格、单发 2 伤害、间隔 0.5s。
+            // 伤害与间隔由技能定义的 BasicAttackDamageOverride / AttackIntervalOverride 走修正器，
+            // 射程无法用修正器下调，改由姿态表覆盖。
+            BasicAttackRangeOverride = 1f,
             EndLagStanceId = BerserkRecovery,
             EndLagDuration = 1.5f
         };

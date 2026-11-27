@@ -22,8 +22,10 @@ namespace Ring.Characters
     /// 伤害判定由 AbilityCaster 以回调传入，在命中帧触发；动作被打断或播完时兜底补发，
     /// 保证「连点攻击」不会因协程被 StopCoroutine 而凭空丢伤害。
     ///
-    /// 跳跃接线：PlayerMotor 重构为 CombatBody 驱动后不再直接调用 PlayJump()，
-    /// 这里由组件订阅 CombatBody.IsAirborne 的上升沿自行播放，避免改动战斗层脚本。
+    /// 跳跃绑定：PlayerMotor 在 CombatBody.RequestJump() 成功后显式调用 PlayJump()，
+    /// 与 SetMoving / PlayPunch / PlayDash 使用同一类绑定点（输入适配层直接驱动），
+    /// 不再依赖组件内部轮询。PollJumpState 降级为兜底，覆盖 AI / 技能等不经 PlayerMotor
+    /// 的起跳路径，并做幂等保护避免与显式调用重复播放。
     /// 人体高度仍由 CombatBody.LateUpdate 驱动 JumpOffset 子物体，本组件不叠加位移。
     /// </summary>
     [DisallowMultipleComponent]
@@ -63,9 +65,17 @@ namespace Ring.Characters
         [Tooltip("崩进冲撞结算伤害的帧下标；-1 表示取序列最后一帧（冲击爆发帧）。")]
         [SerializeField, Min(-1)] private int dashImpactFrameIndex = -1;
 
-        [Header("跳跃")]
-        [Tooltip("关闭后不再自动订阅 CombatBody.IsAirborne，改由外部自行调用 PlayJump()。")]
+        [Header("跳跃兜底")]
+        [Tooltip("开启时组件仍会轮询 CombatBody.IsAirborne 作为兜底（覆盖 AI / 技能起跳）。显式绑定已由 PlayerMotor 完成，关闭此项不影响玩家跳跃动画。")]
         [SerializeField] private bool autoPlayJumpOnAirborne = true;
+
+        [Header("AnimationClip 绑定（Inspector 拖入）")]
+        [Tooltip("把 Assets/Animations/Strongman/ 下的五个 .anim 拖到这里，即完成资产的显式绑定与一致性校验。运行时切帧仍读 Resources/Strongman，字段不参与播放；若要改用 Animator，见 Docs/13 第七节。")]
+        [SerializeField] private AnimationClip idleClip;
+        [SerializeField] private AnimationClip runClip;
+        [SerializeField] private AnimationClip punchClip;
+        [SerializeField] private AnimationClip dashClip;
+        [SerializeField] private AnimationClip jumpClip;
 
         private Sprite[] run, dash, punch, jump;
         private Coroutine action;
@@ -93,6 +103,30 @@ namespace Ring.Characters
         public bool IsPunching => action != null && activeAction == "punch";
         public bool IsJumping => action != null && activeAction == "jump";
         public bool IsMoving => moving;
+
+        /// <summary>五个 AnimationClip 是否都已在 Inspector 绑定（仅状态查询，不影响运行时切帧）。</summary>
+        public bool ClipsBound => idleClip != null && runClip != null && punchClip != null
+                                  && dashClip != null && jumpClip != null;
+
+        /// <summary>跳跃剪辑是否已绑定；拖入 Strongman_Jump.anim 后即为非 null。</summary>
+        public AnimationClip JumpClip => jumpClip;
+
+        /// <summary>列出五个剪辑的绑定状态，便于核对「跳跃动画是否已绑定」。</summary>
+        public string DescribeClipBindings()
+        {
+            return "Idle=" + ClipName(idleClip) + " / Run=" + ClipName(runClip)
+                 + " / Punch=" + ClipName(punchClip) + " / Dash=" + ClipName(dashClip)
+                 + " / Jump=" + ClipName(jumpClip);
+        }
+
+        [ContextMenu("校验 AnimationClip 绑定")]
+        private void LogClipBindings()
+        {
+            Debug.Log("[力士动画] " + DescribeClipBindings(), this);
+            ValidateClipBindings(true);
+        }
+
+        private static string ClipName(AnimationClip clip) => clip != null ? clip.name : "未绑定";
 
         private void Awake()
         {
@@ -173,9 +207,18 @@ namespace Ring.Characters
                         punchScaleMultiplier, actionFps, "punch");
         }
 
-        /// <summary>空格起跳时播放完整跳跃分镜；18fps × 8 帧 = 0.444s，与 CombatBody 滞空时长一致。</summary>
+        /// <summary>
+        /// 起跳时播放完整跳跃分镜；18fps × 8 帧 = 0.444s，与 CombatBody 滞空时长一致。
+        /// 幂等：PlayerMotor 的显式绑定与 PollJumpState 的兜底可能在同一轮起跳中各调一次，
+        /// 已在播跳跃时直接忽略，避免分镜从头重播。
+        /// </summary>
         public bool PlayJump()
         {
+            if (action != null && activeAction == "jump")
+            {
+                return true;
+            }
+
             return Play(jump, null, int.MaxValue, jumpFeetOffsetPixels,
                         jumpScaleMultiplier, jumpFps, "jump");
         }
@@ -313,9 +356,9 @@ namespace Ring.Characters
         }
 
         /// <summary>
-        /// 订阅 CombatBody.IsAirborne 的上升沿播放跳跃帧。
-        /// 组件挂在 Visual 子物体上，CombatBody 在角色根物体，用 GetComponentInParent 向上取。
-        /// 战斗层脚本正在被并行重构，这样接线不改动它们；若将来引入事件总线，可改为订阅事件。
+        /// 兜底：轮询 CombatBody.IsAirborne 的上升沿，覆盖 AI / 技能等不经 PlayerMotor 的起跳路径。
+        /// 玩家跳跃已由 PlayerMotor 显式调用 PlayJump()，这里只补「没被显式播过」的情况。
+        /// 组件挂在 Visual 子物体，CombatBody 在角色根物体，用 GetComponentInParent 向上取。
         /// </summary>
         private void PollJumpState()
         {
@@ -329,8 +372,13 @@ namespace Ring.Characters
                 body = GetComponentInParent<Ring.Flow.CombatBody>();
             }
 
-            bool airborne = body != null && body.IsAirborne;
-            if (airborne && !wasAirborne && action == null)
+            // 击飞(IsLaunched)也会置 airborne，但那是受击表现，不应套用起跳分镜。
+            bool airborne = body != null && body.IsAirborne && !body.IsLaunched;
+
+            // 不再要求 action == null：原实现在出拳/冲撞期间把上升沿直接吞掉（wasAirborne
+            // 已被置 true），导致「攻击中起跳」永久不播。这里允许打断其它单次动作，
+            // Play() 会先 FireImpact() 补结算，不丢伤害；已在播 jump 时由 PlayJump 幂等挡住。
+            if (airborne && !wasAirborne && activeAction != "jump")
             {
                 PlayJump();
             }
@@ -360,6 +408,51 @@ namespace Ring.Characters
             }
 
             ApplyCurrentState();
+            ValidateClipBindings(false);
+        }
+
+        /// <summary>
+        /// 校验 Inspector 绑定的 .anim 与 Resources 切帧数据是否一致。
+        /// 默认静默（运行时 AddComponent 时字段必为空，不应每局刷日志）；verbose 供 ContextMenu 手动核对。
+        /// </summary>
+        private void ValidateClipBindings(bool verbose)
+        {
+            CheckClip("Idle", idleClip, 1, verbose);
+            CheckClip("Run", runClip, run, verbose);
+            CheckClip("Punch", punchClip, punch, verbose);
+            CheckClip("Dash", dashClip, dash, verbose);
+            CheckClip("Jump", jumpClip, jump, verbose);
+
+            if (verbose && !ClipsBound)
+            {
+                Debug.LogWarning("[力士动画] 五个 AnimationClip 尚未全部绑定：" + DescribeClipBindings()
+                                 + "。请在 Inspector 把 Assets/Animations/Strongman/*.anim 拖入对应字段。", this);
+            }
+        }
+
+        private void CheckClip(string label, AnimationClip clip, int expectedFrames, bool verbose)
+        {
+            if (clip == null || expectedFrames <= 0)
+            {
+                return;
+            }
+
+            float fps = Mathf.Max(1f, clip.frameRate);
+            int frames = Mathf.Max(1, Mathf.RoundToInt(clip.length * fps));
+            if (frames != expectedFrames)
+            {
+                Debug.LogWarning("[力士动画] " + label + " 剪辑帧数 " + frames
+                                 + " 与 Resources 帧数 " + expectedFrames + " 不一致。", this);
+            }
+            else if (verbose)
+            {
+                Debug.Log("[力士动画] " + label + " 剪辑 " + frames + " 帧 @ " + fps + "fps，与运行时一致。", this);
+            }
+        }
+
+        private void CheckClip(string label, AnimationClip clip, Sprite[] frames, bool verbose)
+        {
+            CheckClip(label, clip, frames != null ? frames.Length : 0, verbose);
         }
 
         private void LoadFrames()

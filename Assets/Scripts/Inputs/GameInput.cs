@@ -64,6 +64,9 @@ namespace Ring.Inputs
         [Tooltip("把选点结果打印到 Console，方便验收 D12。Hover 模式仅在跨格时打印，不会刷屏。")]
         [SerializeField] private bool logAimPicks;
 
+        [Tooltip("把每个动作的「按下」打印出来，用来区分「键没收到」和「收到了但技能没生效」。排查期建议打开。")]
+        [SerializeField] private bool logActionPresses;
+
         private readonly bool[] pressed = new bool[InputActions.Count];
         private readonly bool[] held = new bool[InputActions.Count];
         private readonly bool[] released = new bool[InputActions.Count];
@@ -664,6 +667,13 @@ namespace Ring.Inputs
                 var action = (InputActionId)i;
                 if (anyDown)
                 {
+                    if (logActionPresses)
+                    {
+                        // 只看得到「按了 1」却看不到「施放」，就能立刻判定问题在技能层而不是输入层。
+                        Debug.Log("[输入] 按下 " + action.ToDisplayName()
+                            + "（" + DescribeBinding(action) + "）", this);
+                    }
+
                     ActionPressed?.Invoke(action);
                 }
 

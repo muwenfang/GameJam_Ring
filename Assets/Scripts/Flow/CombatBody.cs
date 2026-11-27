@@ -170,8 +170,16 @@ namespace Ring.Flow
 
         public void SetMoveInput(Vec2 input)
         {
+            SetMoveInput(input, true);
+        }
+
+        /// <summary>
+        /// 更新移动输入；动作期间可关闭「移动方向带动朝向」，保留攻击锁定的朝向。
+        /// </summary>
+        public void SetMoveInput(Vec2 input, bool updateFacing)
+        {
             moveInput = input.SqrMagnitude > 1f ? input.Normalized : input;
-            if (moveInput.SqrMagnitude > CombatMath.Epsilon)
+            if (updateFacing && moveInput.SqrMagnitude > CombatMath.Epsilon)
             {
                 SetFacing(moveInput);
             }

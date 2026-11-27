@@ -969,6 +969,26 @@ namespace Ring.Flow
                 return;
             }
 
+            if (persona == PersonaId.Spartan)
+            {
+                renderer.color = Color.white;
+                go.transform.localPosition = Vector3.zero;
+                go.transform.localScale = Vector3.one;
+
+                var animation = go.GetComponent<Ring.Characters.SpartanSpriteAnimation>();
+                if (animation == null)
+                {
+                    // AddComponent 会立即触发 Awake，由组件自己加载帧并套用脚底对齐。
+                    go.AddComponent<Ring.Characters.SpartanSpriteAnimation>();
+                }
+                else
+                {
+                    animation.RefreshVisual();
+                }
+
+                return;
+            }
+
             // 其余五个人设继续用纯色方块占位。
             renderer.sprite = GetPlaceholderSprite();
             renderer.color = GetPersonaColor(persona, isPlayer);

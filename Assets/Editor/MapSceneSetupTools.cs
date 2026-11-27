@@ -25,18 +25,21 @@ public static class MapSceneSetupTools
     private const string BackgroundChildName = "BG_背景";
     private const string GroundChildName = "Ground_地面25格";
 
-    // ---- 地面几何（按当前 SampleScene 定标）----
-    // 相机：正交、position(0,0,-10)、orthographicSize=5 → 可见 y ∈ [-5, 5]，16:9 下可见宽 ≈ 17.8。
-    // 角色：MatchSpawner 六边形站位半径 3.5，CharacterInstance 的 transform 原点就是脚底
-    //      （见 SwordsmanSpriteAnimation.ApplyFrame 的脚底锚定）。
-    // 因此把地面「顶面」放在 y = -3.5：最下方那名角色脚底刚好贴住地面，其余角色分布在上方。
-    private const float GroundSurfaceY = -3.5f;
-    private const float GroundWidth = 18f;
-    private const float GroundThickness = 1f;
-
-    // 背景铺满相机全高（2 * orthographicSize）。
-    private const float BackgroundHeight = 10f;
-    private const float BackgroundWidth = 18f;
+    // ---- 设计网格（与 Assets/MapKit/Resources/MapKit/map_config.json 一致）----
+    // 六张背景图统一 1600×768、textureType=8(Sprite)、PPU=64、pivot=(0.5,0.5)
+    //   → sprite 原始尺寸正好 25 × 12 世界单位；
+    // grid: cols=25, rows=12, tileUnits=1；地面只有最底 1 行
+    //   （ForestFireflies.groundHeight=1「地面高度（格，从背景底边算起）」、
+    //    ForestMechanic.groundSurfaceY=1、SteamMechanic 的 25 个井盖格）。
+    // 因此「地图图片中的地面」= 图片最底部 1/12 高度的那条带，碰撞地面只有这一层、不是全屏。
+    //
+    // 具体缩放与位置一律由 MapScreenFitter 按「相机视口」计算（cover 等比缩放：
+    // 不变形、不留黑边，超出视口的部分由屏幕裁掉）。这里只留生成时的兜底数值，
+    // 避免相机缺失时出现旧版那种 x/y 不等比的拉伸。
+    private const float DesignCols = 25f;
+    private const float DesignRows = 12f;
+    private const float GroundRows = 1f;
+    private const float FallbackScale = 10f / 12f; // 相机 orthographicSize=5 → 视口高 10，10/12 ≈ 0.833
 
     private const int BackgroundSortingOrder = -20;
     private const int GroundSortingOrder = -10;
@@ -66,7 +69,9 @@ public static class MapSceneSetupTools
         if (container != null && !EditorUtility.DisplayDialog(
                 "已存在 BattleMaps",
                 "场景里已经有生成的地图容器。\n\n「重新生成」会删除现有六个地图根节点（你在这些物体上的手工调整会丢失）；"
-                + "「只补连线」保留现有物体，仅重新连接展示器与界面引用。",
+                + "「只补连线」保留现有物体，仅重新连接展示器与界面引用。\n\n"
+                + "若只是背景没和屏幕对齐 / 碰撞地面位置不对，请取消本对话框，"
+                + "直接点「按屏幕重新对齐地图与碰撞地面」——不删任何物体。",
                 "重新生成", "只补连线"))
         {
             RewireOnly(scene);
@@ -83,11 +88,12 @@ public static class MapSceneSetupTools
         // 容器必须保持激活：否则六个子根节点即使被 Show() 激活，也会因为父物体隐藏而仍然不显示。
         container.SetActive(true);
 
+        Camera sceneCamera = FindSceneCamera(scene);
         var roots = new GameObject[BattleMaps.Count];
         for (int i = 0; i < BattleMaps.Count; i++)
         {
             BattleMapInfo info = BattleMaps.Info(BattleMaps.FromIndex(i));
-            roots[i] = BuildMapRoot(container.transform, info, i);
+            roots[i] = BuildMapRoot(container.transform, info, i, sceneCamera);
         }
 
         BattleMapPresenter presenter = EnsurePresenter(scene);
@@ -101,10 +107,106 @@ public static class MapSceneSetupTools
 
         Debug.Log("[地图工具] 已生成六张地图根节点（背景 + 碰撞地面）、" + PresenterObjectName
                   + "，并保存场景 " + scene.path + "。\n"
-                  + "地面顶面 Y=" + GroundSurfaceY.ToString("F2") + "，宽 " + GroundWidth
-                  + "，厚 " + GroundThickness + "；六个根节点已存成隐藏，Show() 只会激活抽中的那张。\n"
+                  + "背景按 25×12 设计网格 + 相机视口等比铺满（不变形、不留黑边）；"
+                  + "碰撞地面只覆盖图片最底部 " + GroundRows + " 行（" + DesignRows + " 行中的一层），"
+                  + "不是全屏；六个根节点已存成隐藏，Show() 只激活抽中的那张。\n"
                   + "注意：当前角色没有 Rigidbody2D，碰撞地面只作为地图实体/碰撞层存在，"
-                  + "不会让角色物理站立（详见 Docs/08）。");
+                  + "不会让角色物理站立（详见 Docs/09_按地图切换与碰撞地面.md）。");
+    }
+
+    /// <summary>
+    /// 【就地修复】不删除任何物体、不动连线、不改 Map Id / 贴图 / 排序层，
+    /// 只把已有六张图的背景缩放、位置和地面碰撞体重算成与当前屏幕对齐。
+    /// 用户此前已点过「生成」时，用这个菜单修即可，不必重新生成（不会丢手工调整）。
+    /// </summary>
+    [MenuItem(MenuRoot + "按屏幕重新对齐地图与碰撞地面", false, 2)]
+    public static void RealignToScreen()
+    {
+        Scene scene = SceneManager.GetActiveScene();
+        if (!scene.IsValid() || !scene.isLoaded || string.IsNullOrEmpty(scene.path))
+        {
+            Debug.LogError("[地图工具] 没有已打开且已保存的场景，请先打开 SampleScene 并 Ctrl+S。");
+            return;
+        }
+
+        GameObject container = FindRootOrChildNamed(null, ContainerName);
+        if (container == null)
+        {
+            Debug.LogError("[地图工具] 场景里没有 " + ContainerName + " 容器，请先执行「生成六张地图与碰撞地面」。");
+            return;
+        }
+
+        Camera sceneCamera = FindSceneCamera(scene);
+        if (sceneCamera == null)
+        {
+            Debug.LogWarning("[地图工具] 场景里没找到可用的正交相机，将退回 Camera.main；"
+                             + "若仍为空，请把主相机拖进各 MapScreenFitter 的 Target Camera 槽位。");
+        }
+
+        int fixedCount = 0;
+        for (int i = 0; i < container.transform.childCount; i++)
+        {
+            Transform mapRoot = container.transform.GetChild(i);
+            if (mapRoot.GetComponent<MapScene>() == null)
+            {
+                continue;
+            }
+
+            GameObject bgGo = FindChildNamed(mapRoot, BackgroundChildName);
+            GameObject groundGo = FindChildNamed(mapRoot, GroundChildName);
+            SpriteRenderer bg = bgGo != null ? bgGo.GetComponent<SpriteRenderer>() : null;
+            BoxCollider2D box = groundGo != null ? groundGo.GetComponent<BoxCollider2D>() : null;
+            if (bg == null || groundGo == null || box == null)
+            {
+                Debug.LogWarning("[地图工具] " + mapRoot.name + " 缺少 BG_背景 / Ground_地面25格 / BoxCollider2D，已跳过。"
+                                 + "若物体被改过名，请手工把引用拖进 MapScreenFitter。");
+                continue;
+            }
+
+            MapScreenFitter fitter = mapRoot.GetComponent<MapScreenFitter>();
+            if (fitter == null)
+            {
+                fitter = Undo.AddComponent<MapScreenFitter>(mapRoot.gameObject);
+            }
+
+            const string undoLabel = "按屏幕重新对齐地图与碰撞地面";
+            Undo.RecordObject(fitter, undoLabel);
+            Undo.RecordObject(bg.transform, undoLabel);
+            Undo.RecordObject(groundGo.transform, undoLabel);
+            Undo.RecordObject(box, undoLabel);
+
+            fitter.Configure(sceneCamera, bg, groundGo.transform, box);
+            fitter.Fit();
+
+            EditorUtility.SetDirty(fitter);
+            EditorUtility.SetDirty(bg.transform);
+            EditorUtility.SetDirty(groundGo.transform);
+            EditorUtility.SetDirty(box);
+            fixedCount++;
+        }
+
+        EditorSceneManager.MarkSceneDirty(scene);
+        EditorSceneManager.SaveScene(scene);
+        Debug.Log("[地图工具] 已就地重新对齐 " + fixedCount + " 张地图：背景等比铺满视口、"
+                  + "碰撞地面精确覆盖图片最底部 " + GroundRows + " 行（不是全屏）。"
+                  + "连线、贴图、Map Id 均未改动。想微调可在各图根节点 MapScreenFitter 的 Ground Rows 里改。");
+    }
+
+    /// <summary>取当前场景的正交相机；优先场景根级启用的 Camera，最后退回 Camera.main。</summary>
+    private static Camera FindSceneCamera(Scene scene)
+    {
+        foreach (GameObject go in scene.GetRootGameObjects())
+        {
+            foreach (Camera cam in go.GetComponentsInChildren<Camera>(true))
+            {
+                if (cam.enabled && cam.orthographic)
+                {
+                    return cam;
+                }
+            }
+        }
+
+        return Camera.main;
     }
 
     /// <summary>
@@ -164,12 +266,14 @@ public static class MapSceneSetupTools
 
         EditorSceneManager.MarkSceneDirty(scene);
         EditorSceneManager.SaveScene(scene);
-        Debug.Log("[地图工具] 已保留现有物体并重新连线，详见「钟声 / 地图 / 校验地图接线」。");
+        Debug.Log("[地图工具] 已保留现有物体并重新连线，详见「钟声 / 地图 / 校验地图接线」。\n"
+                  + "注意：本菜单刻意不改动你手工调过的几何。若背景没和屏幕对齐，"
+                  + "请另点「按屏幕重新对齐地图与碰撞地面」（只改缩放/位置/碰撞体，仍不动连线与贴图）。");
     }
 
     // ---------------------------------------------------------------- 校验
 
-    [MenuItem(MenuRoot + "校验地图接线", false, 2)]
+    [MenuItem(MenuRoot + "校验地图接线", false, 3)]
     public static void Validate()
     {
         BattleMapPresenter presenter = UnityEngine.Object.FindObjectOfType<BattleMapPresenter>(true);
@@ -214,10 +318,20 @@ public static class MapSceneSetupTools
                 ok++;
             }
 
+            MapScreenFitter fitter = mapScene.GetComponent<MapScreenFitter>();
+            bool aligned = fitter != null;
+            GameObject bgGo = FindChildNamed(mapScene.transform, BackgroundChildName);
+            string scaleInfo = bgGo != null
+                ? "BG缩放=(" + bgGo.transform.localScale.x.ToString("F3") + ", "
+                  + bgGo.transform.localScale.y.ToString("F3") + ")"
+                : "BG缺失";
+
             Debug.Log("[地图工具] 槽位 " + i + " " + info.DisplayName
                       + " → " + mapScene.name
                       + " | MapId=" + mapScene.MapId + (idOk ? " ✓" : " ✗ 应为 " + info.Id)
                       + " | 地面=" + (groundOk ? "顶面 Y=" + mapScene.GroundSurfaceY.ToString("F2") : "未接")
+                      + " | " + scaleInfo
+                      + " | 屏幕对齐=" + (aligned ? "已挂 MapScreenFitter" : "未挂（点「按屏幕重新对齐地图与碰撞地面」补上）")
                       + " | 初始激活=" + mapScene.gameObject.activeSelf
                       + (mapScene.gameObject.activeSelf ? "（建议存成隐藏）" : ""));
         }
@@ -250,7 +364,7 @@ public static class MapSceneSetupTools
 
     // ---------------------------------------------------------------- 清理
 
-    [MenuItem(MenuRoot + "移除生成的地图与展示器", false, 3)]
+    [MenuItem(MenuRoot + "移除生成的地图与展示器", false, 4)]
     public static void RemoveGenerated()
     {
         if (!EditorUtility.DisplayDialog(
@@ -290,7 +404,7 @@ public static class MapSceneSetupTools
 
     // ---------------------------------------------------------------- 内部：搭一张地图
 
-    private static GameObject BuildMapRoot(Transform parent, BattleMapInfo info, int index)
+    private static GameObject BuildMapRoot(Transform parent, BattleMapInfo info, int index, Camera sceneCamera)
     {
         var root = new GameObject(info.ZoneName);
         Undo.RegisterCreatedObjectUndo(root, "生成地图 " + info.DisplayName);
@@ -301,52 +415,48 @@ public static class MapSceneSetupTools
         // 新建对象没有手工值需要尊重，必须强制写入编号，否则六个 Map Id 会全是默认的 Map01。
         EnsureMapId(mapScene, index, true);
 
-        // 背景：SpriteRenderer 缩放铺满相机视野。贴图在编辑器里 Load 后序列化进场景，运行时零加载。
+        // 背景：只赋值贴图与排序层。缩放 / 居中一律交给 MapScreenFitter 按相机视口算，
+        // 这里给一个等比兜底值，绝不再用 x/y 不等比的 ScaleToSize（那会把 25:12 的图压变形）。
+        // 贴图在编辑器里 Load 后序列化进场景，运行时零加载。
         Sprite bgSprite = LoadFirstSprite(MapRoot + info.ZoneFolder + "/Backgrounds");
         GameObject bg = CreateChild(root.transform, BackgroundChildName, Vector3.zero);
         var bgRenderer = bg.AddComponent<SpriteRenderer>();
         bgRenderer.sprite = bgSprite;
         bgRenderer.sortingOrder = BackgroundSortingOrder;
-        if (bgSprite != null)
-        {
-            bg.transform.localScale = ScaleToSize(bgSprite, BackgroundWidth, BackgroundHeight);
-        }
-        else
+        bg.transform.localScale = Vector3.one * FallbackScale;
+        if (bgSprite == null)
         {
             Debug.LogWarning("[地图工具] " + info.DisplayName + " 没找到背景 Sprite（" + info.ZoneFolder
                              + "/Backgrounds），已留空，请在 Inspector 里手工指定。");
         }
 
-        // 碰撞地面：子节点带 SpriteRenderer + BoxCollider2D。
-        // 碰撞体顶面 = groundRoot.localPosition.y + GroundThickness/2 = GroundSurfaceY。
+        // 碰撞地面：图片最底部 GroundRows 行的一整条，宽度与背景一致（不是全屏）。
+        // 视觉地面已经画在背景图里，本层只做碰撞；SpriteRenderer 保留贴图引用但禁用渲染，
+        // 避免把 1×1 的地面 tile 拉成一条糊掉的长条。想显示平铺砖可自行勾选并调 drawMode。
         Sprite groundSprite = LoadGroundSprite(info);
-        var groundGo = CreateChild(
-            root.transform, GroundChildName,
-            new Vector3(0f, GroundSurfaceY - GroundThickness * 0.5f, 0f));
-
+        var groundGo = CreateChild(root.transform, GroundChildName, Vector3.zero);
         var groundRenderer = groundGo.AddComponent<SpriteRenderer>();
         groundRenderer.sprite = groundSprite;
         groundRenderer.sortingOrder = GroundSortingOrder;
+        groundRenderer.enabled = false;
 
         var box = groundGo.AddComponent<BoxCollider2D>();
-        if (groundSprite != null)
-        {
-            // collider.size 用 sprite 的本地尺寸，配合 localScale 缩放后世界尺寸正好是 Width × Thickness。
-            box.size = groundSprite.bounds.size;
-            groundGo.transform.localScale = ScaleToSize(groundSprite, GroundWidth, GroundThickness);
-        }
-        else
-        {
-            box.size = new Vector2(GroundWidth, GroundThickness);
-        }
-
+        // size 用「图片原始单位」表达：25 宽 × 1 行高，配合 localScale=s 后
+        // 世界尺寸 = (25s × 1s)，与背景图里那条地面带完全重合。
+        box.size = new Vector2(DesignCols, GroundRows);
         box.offset = Vector2.zero;
         box.isTrigger = false;
+        groundGo.transform.localScale = Vector3.one * FallbackScale;
 
         var mapSo = new SerializedObject(mapScene);
         mapSo.FindProperty("groundRoot").objectReferenceValue = groundGo.transform;
         mapSo.FindProperty("groundCollider").objectReferenceValue = box;
         mapSo.ApplyModifiedPropertiesWithoutUndo();
+
+        // 屏幕对齐组件：显式连好四条引用，并立刻算一次几何写进场景（静态值可在 Inspector 改）。
+        var fitter = root.AddComponent<MapScreenFitter>();
+        fitter.Configure(sceneCamera, bgRenderer, groundGo.transform, box);
+        fitter.Fit();
 
         // 六张根节点存成隐藏：Show() 只激活抽中的那张，初始全激活会叠在一起。
         root.SetActive(false);
@@ -541,15 +651,6 @@ public static class MapSceneSetupTools
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
             .Select(f => f.Replace('\\', '/'))
             .ToArray();
-    }
-
-    /// <summary>按 sprite 的本地 bounds.size 计算缩放，使显示尺寸等于 (width, height) 世界单位。</summary>
-    private static Vector3 ScaleToSize(Sprite sprite, float width, float height)
-    {
-        Vector2 size = sprite.bounds.size;
-        float sx = size.x > 0.0001f ? width / size.x : 1f;
-        float sy = size.y > 0.0001f ? height / size.y : 1f;
-        return new Vector3(sx, sy, 1f);
     }
 
     private static GameObject CreateChild(Transform parent, string childName, Vector3 localPosition)

@@ -47,6 +47,10 @@ namespace Ring.Flow
 
         private SwordsmanSpriteAnimation swordAnimation;
         private bool swordAnimationSearched;
+        private StrongmanSpriteAnimation strongmanAnimation;
+        private bool strongmanAnimationSearched;
+        private SpartanSpriteAnimation spartanAnimation;
+        private bool spartanAnimationSearched;
         private float projectileTime;
         private float meditationHealTimer;
         private readonly Dictionary<ProjectileState, ProjectileView> projectileViews =
@@ -84,7 +88,9 @@ namespace Ring.Flow
             TickMeditation();
 
             GameInput input = GameInput.Instance;
-            if (input == null)
+            // AbilityCaster 也可能被场景里的旧对象或 AI 挂载；全局玩家输入只由玩家消费。
+            // 非玩家仍会在上方推进自己已有的弹道与持续效果。
+            if (input == null || !instance.IsPlayer)
             {
                 return;
             }
@@ -110,6 +116,28 @@ namespace Ring.Flow
             }
         }
 
+        // ---------------- UI 按钮入口 ----------------
+        // 想让「点击技能卡」也能施放：在 Inspector 里给按钮的 OnClick 拖本组件，
+        // 选下面三个无参方法即可（不需要写任何额外的 UI 代码）。
+
+        /// <summary>本我技能（1 号槽）。</summary>
+        public void CastIdSkill()
+        {
+            Cast(AbilitySlot.Id);
+        }
+
+        /// <summary>自我技能（2 号槽）。</summary>
+        public void CastEgoSkill()
+        {
+            Cast(AbilitySlot.Ego);
+        }
+
+        /// <summary>超我技能（3 号槽）。</summary>
+        public void CastSuperegoSkill()
+        {
+            Cast(AbilitySlot.Superego);
+        }
+
         /// <summary>施放一个技能槽；返回是否真的放出去了。</summary>
         public bool Cast(AbilitySlot slot)
         {
@@ -121,6 +149,13 @@ namespace Ring.Flow
             AbilityDefinition definition = instance.Loadout != null ? instance.Loadout.GetDefinition(slot) : null;
             if (definition == null)
             {
+                // 这里以前是静默 return：槽位空时按键完全没反馈，最难排查的一类「技能没反应」。
+                if (logCasts)
+                {
+                    Debug.LogWarning("[技能] " + slot.ToDisplayName() + " 槽没有技能卡（Loadout 为空），"
+                        + "按键 " + (int)slot.ToSkillTier() + " 不会生效。", this);
+                }
+
                 return false;
             }
 
@@ -132,6 +167,8 @@ namespace Ring.Flow
             {
                 instance.Combat.CancelStance();
                 instance.Abilities.CancelModifiers(slot);
+                // 提前解除自我：让斯巴达立刻收盾，而不是等 2s 计时走完。
+                SpartanAnimation?.EndShield();
                 if (logCasts)
                 {
                     Debug.Log("[技能] 提前解除 " + definition.ToDisplayName(), this);
@@ -201,6 +238,22 @@ namespace Ring.Flow
 
             ApplyStance(definition, slot);
             ExecuteAbility(activation, slot);
+
+            // 斯巴达表现：本我横扫在 ExecuteAbility 内以「命中帧回调」播放（见 TryPlayCasterAction），
+            // 这里只补 ExecuteAbility 不会走到动画的两个槽位——自我举盾、超我投矛。
+            // 判断依据用姿态 id 而不是人设：拆卡混装时施法者身上的姿态才是准的。
+            SpartanSpriteAnimation spartan = SpartanAnimation;
+            if (spartan != null && ResolveStanceId(definition, slot) == CombatStances.ShieldWall)
+            {
+                // 抬盾 0.5s → 保持到姿态结束（DurationSeconds 默认 2s）→ 倒序收盾。
+                // 再次点击提前解除由上方 cancel 分支调用 EndShield()。
+                spartan.BeginShield(definition.DurationSeconds);
+            }
+            else if (spartan != null && slot == AbilitySlot.Superego)
+            {
+                // 投矛复用突刺分镜：伤害由弹道自身结算，这里只做动作表现。
+                spartan.PlayThrust(null);
+            }
 
             if (slot == AbilitySlot.Superego)
             {
@@ -288,10 +341,21 @@ namespace Ring.Flow
                 return;
             }
 
-            ResolveShape(definition, GetAimDirection(), definition.Damage, DamageTags.Skill,
+            // 朝向在「按下瞬间」锁定：结算要等动画命中帧，届时鼠标可能已经移开了。
+            Vec2 aimedDirection = GetAimDirection();
+            System.Action resolve = () => ResolveShape(definition, aimedDirection, definition.Damage, DamageTags.Skill,
                 definition.KnockbackCells, definition.SlowPercent, definition.SlowSeconds,
                 definition.StunSeconds, definition.RootSeconds, definition.DamageTakenBonusPercent,
                 EffectDuration(definition));
+
+            // 与平A一致：非位移、非弹道的技能也要有挥砍/出拳表现，
+            // 否则伤害在第 0 帧就结算，画面上人物纹丝不动 —— 玩家会当成「技能没生效」。
+            if (TryPlayCasterAction(resolve))
+            {
+                return;
+            }
+
+            resolve();
         }
 
         // ---------------- 弹道 ----------------
@@ -551,14 +615,10 @@ namespace Ring.Flow
             float travelled = Vec2.Distance(start, end);
 
             System.Action resolve = () => ResolveDashHit(definition, start, direction, travelled);
-            SwordsmanSpriteAnimation animation = SwordAnimation;
-            if (definition.Persona == PersonaId.Swordsman && animation != null && animation.PlayDash(resolve))
-            {
-                return;
-            }
 
-            StrongmanSpriteAnimation strongman = GetComponentInChildren<StrongmanSpriteAnimation>();
-            if (definition.Persona == PersonaId.Strongman && strongman != null && strongman.PlayDash(resolve))
+            // 突刺分镜同样按施法者选：剑客放别人的本我冲刺也要有「突刺」这一下，
+            // 否则位移已经发生、画面上却还是跑步帧，手感等同于「按了没反应」。
+            if (TryPlayCasterDash(resolve))
             {
                 return;
             }
@@ -818,7 +878,9 @@ namespace Ring.Flow
                 return false;
             }
 
-            System.Action resolve = () => ResolveBasicAttack(definition);
+            // 朝向在按下瞬间锁定：结算要等动画命中帧，届时鼠标可能已经移开。
+            Vec2 aimedDirection = GetAimDirection();
+            System.Action resolve = () => ResolveBasicAttack(definition, aimedDirection);
 
             SwordsmanSpriteAnimation animation = SwordAnimation;
             if (animation != null && animation.PlayAttack(resolve))
@@ -826,8 +888,15 @@ namespace Ring.Flow
                 return true;
             }
 
-            StrongmanSpriteAnimation strongman = GetComponentInChildren<StrongmanSpriteAnimation>();
+            StrongmanSpriteAnimation strongman = StrongmanAnimation;
             if (strongman != null && strongman.PlayPunch(resolve))
+            {
+                return true;
+            }
+
+            // 斯巴达长矛突刺：6 帧 15fps，命中帧 3 = 0.200s，正好是规格里的前摇 0.2s。
+            SpartanSpriteAnimation spartan = SpartanAnimation;
+            if (spartan != null && spartan.PlayThrust(resolve))
             {
                 return true;
             }
@@ -836,7 +905,7 @@ namespace Ring.Flow
             return true;
         }
 
-        private void ResolveBasicAttack(AbilityDefinition definition)
+        private void ResolveBasicAttack(AbilityDefinition definition, Vec2 aimedDirection)
         {
             if (instance == null || instance.IsDead)
             {
@@ -851,7 +920,8 @@ namespace Ring.Flow
             }
 
             DerivedAbilityStats derived = instance.Derived;
-            CharacterInstance target = FindNearestTarget(Mathf.Max(0.5f, derived.AttackRangeCells));
+            CharacterInstance target = FindBasicAttackTarget(definition, aimedDirection,
+                Mathf.Max(0.5f, derived.AttackRangeCells));
             if (target == null)
             {
                 if (logCasts)
@@ -953,6 +1023,50 @@ namespace Ring.Flow
             return null;
         }
 
+        /// <summary>
+        /// 平A 选目标。技能表给近战平A 写的是「正前方 N 格长 × M 格宽矩形」
+        /// （斯巴达长矛是 2×1、剑客 1×2、力士 1×2），所以矩形/扇形必须按朝向选目标：
+        /// 只打正前方，挥空就是挥空，不能退化成「射程内最近的人」——
+        /// 否则长矛会穿到身后，与技能表脱节。
+        /// 没有形状信息（弹道类在更早的分支处理）时退回旧的「射程内最近单体」。
+        /// </summary>
+        private CharacterInstance FindBasicAttackTarget(AbilityDefinition definition, Vec2 direction,
+            float rangeWorld)
+        {
+            HitShape shape = null;
+            if (definition.Shape == AbilityShape.Rect || definition.Shape == AbilityShape.Fan)
+            {
+                shape = HitShape.FromDefinition(definition);
+            }
+
+            // 姿态可以把平A 改短：狂战「单刀」把长矛 2 格压成 1 格（见 CombatStances.BerserkSpec）。
+            CombatStanceSpec stance = instance.Combat != null && instance.Combat.Stance.IsActive
+                ? instance.Combat.Stance.Current
+                : null;
+            if (stance != null && stance.BasicAttackRangeOverride > 0f)
+            {
+                shape = HitShape.Rect(stance.BasicAttackRangeOverride, 1f);
+            }
+
+            if (shape != null)
+            {
+                BuildTargetInfos();
+                int id = shape.QueryFirst(ToVec2(transform.position), direction, targetBuffer, instance.Id);
+                if (id >= 0)
+                {
+                    CharacterInstance shaped = FindInstance(id);
+                    if (shaped != null && !shaped.IsDead)
+                    {
+                        return shaped;
+                    }
+                }
+
+                return null;
+            }
+
+            return FindNearestTarget(rangeWorld);
+        }
+
         private CharacterInstance FindNearestTarget(float rangeWorld)
         {
             CharacterInstance[] all = FindObjectsOfType<CharacterInstance>();
@@ -998,7 +1112,10 @@ namespace Ring.Flow
                 Vec2 aim = ToVec2(input.AimWorldPoint) - origin;
                 if (aim.SqrMagnitude > 0.001f)
                 {
-                    return aim.Normalized;
+                    Vec2 direction = aim.Normalized;
+                    // 输入瞄准、命中判定与精灵水平翻转统一使用同一个方向。
+                    body?.SetFacing(direction);
+                    return direction;
                 }
             }
 
@@ -1139,6 +1256,87 @@ namespace Ring.Flow
 
                 return swordAnimation;
             }
+        }
+
+        private StrongmanSpriteAnimation StrongmanAnimation
+        {
+            get
+            {
+                if (!strongmanAnimationSearched)
+                {
+                    strongmanAnimationSearched = true;
+                    strongmanAnimation = GetComponentInChildren<StrongmanSpriteAnimation>();
+                }
+
+                return strongmanAnimation;
+            }
+        }
+
+        private SpartanSpriteAnimation SpartanAnimation
+        {
+            get
+            {
+                if (!spartanAnimationSearched)
+                {
+                    spartanAnimationSearched = true;
+                    spartanAnimation = GetComponentInChildren<SpartanSpriteAnimation>();
+                }
+
+                return spartanAnimation;
+            }
+        }
+
+        // ---------------- 动作表现（与判定对齐） ----------------
+
+        /// <summary>
+        /// 用「施法者自己」的序列帧播一次攻击表现，命中帧再回调结算。
+        ///
+        /// 关键点：动画按**施法者**选，不按技能的来源人设选。
+        /// 拆卡混装是本作核心机制——剑客完全可以装着力士的本我技能，
+        /// 若这里按 definition.Persona 选动画，剑客放力士技能就一套动作都没有，
+        /// 玩家只看到血条掉了、人没动，表现为「技能没反应」。
+        /// </summary>
+        private bool TryPlayCasterAction(System.Action onImpact)
+        {
+            SwordsmanSpriteAnimation swordsman = SwordAnimation;
+            if (swordsman != null && swordsman.PlayAttack(onImpact))
+            {
+                return true;
+            }
+
+            StrongmanSpriteAnimation strongman = StrongmanAnimation;
+            if (strongman != null && strongman.PlayPunch(onImpact))
+            {
+                return true;
+            }
+
+            // 斯巴达：本我「战阵横扫」等矩形技能走横扫分镜，命中帧 = 弧光帧（3 / 12fps = 0.25s）。
+            // 放进来之后，这类技能不再是「按下瞬间第 0 帧结算、人物纹丝不动」。
+            SpartanSpriteAnimation spartan = SpartanAnimation;
+            if (spartan != null && spartan.PlaySweep(onImpact))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>同 <see cref="TryPlayCasterAction"/>，但走突刺分镜。</summary>
+        private bool TryPlayCasterDash(System.Action onImpact)
+        {
+            SwordsmanSpriteAnimation swordsman = SwordAnimation;
+            if (swordsman != null && swordsman.PlayDash(onImpact))
+            {
+                return true;
+            }
+
+            StrongmanSpriteAnimation strongman = StrongmanAnimation;
+            if (strongman != null && strongman.PlayDash(onImpact))
+            {
+                return true;
+            }
+
+            return false;
         }
     }
 }

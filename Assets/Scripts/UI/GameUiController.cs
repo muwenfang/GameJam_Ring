@@ -15,20 +15,30 @@ namespace Ring.UI
     /// 界面层：只订阅 <see cref="GameFlow"/> 的状态事件，不碰钟声规则、不碰角色数值。
     ///
     /// 切换方式：单场景 + 面板切换，不换 Scene。
-    /// 主菜单的 Canvas（含 SettingPanel）是场景里手工搭的，本组件只负责显示/隐藏与绑定按钮；
-    /// HUD 与结算面板仍然是运行时用 <see cref="UiBuilder"/> 搭出来的（autoBuildUi）。
-    /// 不换 Scene 的理由：GameFlow / BellSystem / GameInput 与主菜单 Canvas 都挂在 SampleScene 的根物体上，
+    /// 主菜单 Canvas、战斗画布、设置面板、HUD 都是场景里手工搭的，本组件只负责显示/隐藏与绑定按钮；
+    /// 只有结算面板用 <see cref="UiBuilder"/> 运行时搭（autoBuildUi），HUD 找不到时才兜底搭一套。
+    /// 不换 Scene 的理由：GameFlow / BellSystem / GameInput 与这些 Canvas 都挂在 SampleScene 的根物体上，
     /// 换场景就得把它们搬进 DontDestroyOnLoad，还要单独保住 SettingPanel —— 属于自找麻烦。
     ///
+    /// 渲染层级（排查「开局后地图/角色不显示」）：地图与角色是 BattleMaps 下的世界空间 SpriteRenderer，
+    /// 由 Main Camera 渲染；场景里 4 个 UI Canvas 全是 Screen Space - Overlay，永远画在相机之上。
+    /// 因此任一「不透明 + 铺满全屏」的 Overlay Image 处于激活就会盖住整张战场。
+    /// 对策：HideMenu 整块关掉主菜单 Canvas（含其全屏 MenuImage）；hideBattleBackdrops 关掉战斗画布里的
+    /// 全屏纯色底图。TopCanvas 常驻激活且常驻置顶（TopCanvasSortingOrder），其下的顶层界面各自开合，
+    /// 画布本身不随状态切换或设置面板开合而隐藏 / 还原层级。
+    ///
     /// 界面构成：
-    /// - 主菜单（场景里手工搭的 Canvas：开始游戏 / 设置 / 退出游戏）
-    /// - 战斗画布 battleCanvas（场景里手工搭的 Canvas，开局后显示，并按本局随机地图切换场景）
-    /// - HUD（运行时搭：阶段、下一次钟声倒计时、自己的牌与人；收集/淘汰只换提示文案）
+    /// - 主菜单 MainMenu（场景里手工搭的 Canvas：开始游戏 / 设置 / 退出游戏）
+    /// - 战斗画布 battleCanvas（场景里现名 BattleGround，开局后显示，并按本局随机地图切换场景）
+    /// - 顶层画布 TopCanvas（场景里手工搭的 Canvas：常驻激活 + 常驻置顶，承载设置 / 结算 / 改键等顶层界面）
+    /// - 设置面板 SettingPanel（挂在 TopCanvas 下，场景里存成激活，运行时由 HideSettings 收起）
+    /// - HUD（场景里手工搭的 BattleHud，挂在 HudCanvas；找不到才运行时搭）
     /// - 结算（运行时搭：胜利 / 失败 + 返回主菜单）
     ///
     /// 场景约定（名字对上就能自动找到，也可以在 Inspector 里手动拖）：
     /// MainMenu / Start / Setting / Exit / SettingPanel（FullScreen / CloseSetting / AudioSlider）。
-    /// 战斗画布按 "battleCanvas" 找，兼容场景里的旧名 "BattleGround"；六个地图槽位挂在 BattleMapPresenter 上。
+    /// 战斗画布按 "battleCanvas" 找，兼容场景里的旧名 "BattleGround"；顶层画布按 "TopCanvas" 找；
+    /// 六个地图槽位挂在 BattleMapPresenter 上。
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("钟声/界面 GameUiController")]
@@ -60,8 +70,14 @@ namespace Ring.UI
         private const string VolumeKey = "Ring.Volume";
         private const string FullScreenKey = "Ring.FullScreen";
 
-        /// <summary>设置面板打开时主菜单 Canvas 的层级：抬到 HUD（100）之上。</summary>
-        private const int SettingsSortingOrder = 300;
+        /// <summary>
+        /// 顶层画布 TopCanvas 常驻的 Sorting Order。必须高于 HudCanvas(90)、RingCanvas(100)、
+        /// 以及战斗画布 / 主菜单(0)，这样挂在它下面的设置、结算、改键等界面永远压在最上面。
+        /// </summary>
+        private const int TopCanvasSortingOrder = 1000;
+
+        /// <summary>顶层画布在场景里的名字（大小写不敏感）。</summary>
+        private const string TopCanvasName = "TopCanvas";
 
         [Header("主菜单（场景里手工搭的 Canvas）")]
         [SerializeField]
@@ -121,6 +137,13 @@ namespace Ring.UI
         [Tooltip("战斗 HUD（左右血条 + 状态栏 + 钟声倒计时/回合数）。留空时先在场景里找，找不到再运行时搭一套。")]
         private BattleHud battleHud;
 
+        [Header("顶层画布（场景里手工搭，常驻激活 + 置顶）")]
+        [SerializeField]
+        [Tooltip("顶层 UI 画布（场景里名为 TopCanvas）。运行时强制保持激活、并把 Sorting Order 设为 "
+            + "TopCanvasSortingOrder，用于承载设置 / 结算 / 改键等需要盖住一切的界面；画布本身永不隐藏。"
+            + "留空时按名字自动找。")]
+        private Canvas topCanvas;
+
         [Header("行为")]
         [SerializeField]
         [Tooltip("游戏流程控制器；留空时自动取 GameFlow.Instance。")]
@@ -143,8 +166,9 @@ namespace Ring.UI
         private bool fixBlockingRaycasts = true;
 
         [SerializeField]
-        [Tooltip("运行时把「没指定贴图、又不透明地铺在按钮上面」的装饰 Image 关掉（MenuImage / SettingImage）。指定了贴图就不动。")]
-        private bool hideEmptyBackdrops = true;
+        [Tooltip("运行时关掉战斗画布里「没指定贴图 + 不透明 + 铺满全屏」的纯色占位底图（如 bg1）。"
+            + "Screen Space - Overlay 会把这类 Image 画在世界空间的地图与角色之上；有贴图或半透明的不动。")]
+        private bool hideBattleBackdrops = true;
 
         [SerializeField]
         [Tooltip("是否打印界面切换日志。")]
@@ -171,7 +195,6 @@ namespace Ring.UI
         /// <summary>主菜单子物体在 Awake 时的显示状态，回到主菜单时按它还原。</summary>
         private readonly Dictionary<GameObject, bool> menuChildStates = new Dictionary<GameObject, bool>();
 
-        private int menuSortingOrder;
         private bool settingsOpen;
         private bool pausedBySettings;
         private float timeScaleBeforePause = 1f;
@@ -189,6 +212,7 @@ namespace Ring.UI
                 Debug.LogWarning("[界面] 场景里没有 GameFlow，界面不会响应任何操作。", this);
             }
 
+            ResolveTopCanvas();
             ResolveMenuReferences();
             ResolveBattleReferences();
 
@@ -291,6 +315,11 @@ namespace Ring.UI
                     "[界面] 场景里没有 BattleMapPresenter：本局仍会随机地图，但不展示地图场景"
                     + "（MapKit 六张地图根节点尚未搭进场景，这是预期状态）。接法见 Docs/06_MapKit地图资源与接线.md。", this);
             }
+
+            // 战斗画布是 Screen Space - Overlay，会画在 Main Camera 的世界之上。
+            // 画布里若有「无贴图 + 不透明 + 铺满全屏」的占位纯色底图，开局一显示就会盖住地图与角色。
+            // 这类底图通常是搭界面时的临时背景（如 bg1），运行时关掉，避免污染战场。
+            DisableBattleBackdrops();
         }
 
         /// <summary>
@@ -389,6 +418,86 @@ namespace Ring.UI
             }
         }
 
+        // ---------- 顶层画布（常驻激活 + 置顶） ----------
+
+        /// <summary>
+        /// 顶层画布是场景里手工搭的容器，用来放设置 / 结算 / 改键等需要盖住一切的界面。
+        /// 约定：它自身永远激活、永远保持最高 Sorting Order；只有其下的子面板各自开合。
+        /// 这样任何顶层界面一 SetActive(true) 就能画在最上面，不必再临时激活父 Canvas 或抬层级。
+        /// </summary>
+        private void ResolveTopCanvas()
+        {
+            if (topCanvas == null)
+            {
+                topCanvas = FindTopCanvas();
+            }
+
+            if (topCanvas == null)
+            {
+                Debug.LogWarning(
+                    "[界面] 场景里找不到名为 " + TopCanvasName + " 的根 Canvas：顶层界面不会被置顶。"
+                    + "请搭一个 Canvas 并拖进 Top Canvas 槽，或直接命名为 " + TopCanvasName + "。", this);
+                return;
+            }
+
+            // 用户可能拖了子级 Canvas，统一收敛到根 Canvas，避免激活 / 置顶作用在半路节点上。
+            if (topCanvas.rootCanvas != topCanvas)
+            {
+                topCanvas = topCanvas.rootCanvas;
+            }
+
+            EnsureTopCanvasOnTop();
+
+            if (logUi)
+            {
+                Debug.Log("[界面] 顶层画布 " + topCanvas.name + "：常驻激活，Sorting Order = "
+                    + TopCanvasSortingOrder + "。", this);
+            }
+        }
+
+        /// <summary>按名字找顶层根 Canvas（含未激活物体）；找不到返回 null 让调用方打警告。</summary>
+        private static Canvas FindTopCanvas()
+        {
+            Canvas[] canvases = FindObjectsByType<Canvas>(FindObjectsInactive.Include);
+            for (int i = 0; i < canvases.Length; i++)
+            {
+                Canvas canvas = canvases[i];
+                if (canvas == null || canvas.rootCanvas != canvas)
+                {
+                    continue;
+                }
+
+                if (string.Equals(canvas.name, TopCanvasName, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return canvas;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// 幂等兜底：状态切换 / 打开顶层界面前调用，保证 TopCanvas 没被别处关掉或降层级。
+        /// 只动画布本身，绝不碰它下面的子面板显隐。
+        /// </summary>
+        private void EnsureTopCanvasOnTop()
+        {
+            if (topCanvas == null)
+            {
+                return;
+            }
+
+            if (!topCanvas.gameObject.activeSelf)
+            {
+                topCanvas.gameObject.SetActive(true);
+            }
+
+            if (topCanvas.sortingOrder != TopCanvasSortingOrder)
+            {
+                topCanvas.sortingOrder = TopCanvasSortingOrder;
+            }
+        }
+
         // ---------- 场景里的主菜单 ----------
 
         /// <summary>把场景主菜单上的 Canvas / 按钮 / 滑条找齐，记下原始状态，绑好回调。</summary>
@@ -407,12 +516,17 @@ namespace Ring.UI
                 return;
             }
 
-            menuSortingOrder = mainMenuCanvas.sortingOrder;
-
             Transform root = mainMenuCanvas.transform;
             if (settingsPanel == null)
             {
                 settingsPanel = FindGameObject(root, SettingsPanelName);
+            }
+
+            // 设置面板实际挂在独立的顶层画布 TopCanvas 下，不在主菜单子树里；
+            // 主菜单里找不到时再从顶层画布找一次（场景里通常已手工拖入 Inspector）。
+            if (settingsPanel == null && topCanvas != null)
+            {
+                settingsPanel = FindGameObject(topCanvas.transform, SettingsPanelName);
             }
 
             if (startButton == null)
@@ -467,15 +581,9 @@ namespace Ring.UI
                 DisableRaycast(FindComponent<Image>(root, SettingsBackdropName), "它在全屏按钮之前绘制，会挡住全屏按钮");
             }
 
-            //if (hideEmptyBackdrops)
-            //{
-            //    HideEmptyBackdrop(
-            //        FindComponent<Image>(root, MenuBackdropName),
-            //        "它排在主菜单最后、又铺满全屏，会把开始/设置/退出三个按钮整块盖住");
-            //    HideEmptyBackdrop(
-            //        FindComponent<Image>(root, SettingsBackdropName),
-            //        "它排在「全屏」按钮后面，会把全屏按钮整块盖住");
-            //}
+            // 主菜单里的 MenuImage / 设置里的 SettingImage 都是「无贴图纯色」装饰层：
+            // 只关它们的 Raycast Target（上面 fixBlockingRaycasts 做的事），保留其可见性做背景。
+            // 主菜单整块 Canvas 会在 HideMenu 里关掉，所以这里不需要额外隐藏背景。
 
             // 场景里 SettingPanel 是存成开着的，运行时先收起来。
             HideSettings();
@@ -543,6 +651,10 @@ namespace Ring.UI
                 return;
             }
 
+            // 整块 Canvas 一起激活：主菜单是 Screen Space - Overlay，只还原子物体时
+            // 万一 Canvas 本体被关过，子物体再怎么 SetActive(true) 也画不出来。
+            mainMenuCanvas.gameObject.SetActive(true);
+
             foreach (KeyValuePair<GameObject, bool> pair in menuChildStates)
             {
                 if (pair.Key != null)
@@ -562,6 +674,12 @@ namespace Ring.UI
                 return;
             }
 
+            // 关键：整块关掉主菜单 Canvas，而不只是逐个关直接子物体。
+            // 主菜单里 MenuImage 是「无贴图 + 不透明 + 铺满全屏」的纯色 Image；
+            // 只要它残留（子物体快照漏一项、或某帧被重新激活），Overlay 层就会把
+            // 世界空间里由 Main Camera 渲染的地图与角色整块盖住 —— 表现为「开局后看不到战场」。
+            // 关掉 Canvas 本体最彻底：其下所有 UI（含射线挡板）一并失效。
+            // 控制器 / GameFlow / 相机 / BattleMaps 都是场景根物体，不在这棵子树里，不受影响。
             foreach (GameObject child in menuChildStates.Keys)
             {
                 if (child != null)
@@ -570,6 +688,7 @@ namespace Ring.UI
                 }
             }
 
+            mainMenuCanvas.gameObject.SetActive(false);
             HideSettings();
         }
 
@@ -772,14 +891,11 @@ namespace Ring.UI
                 return;
             }
 
+            // 顶层画布常驻激活且已置顶，这里只需把面板自身打开；
+            // 顺手幂等兜底一次，防止运行时有别处把 TopCanvas 关掉或降了层级。
+            EnsureTopCanvasOnTop();
             settingsPanel.SetActive(true);
             settingsOpen = true;
-
-            // 游戏里 HUD 的 Canvas 层级更高，设置面板要临时抬到它上面。
-            if (mainMenuCanvas != null)
-            {
-                mainMenuCanvas.sortingOrder = SettingsSortingOrder;
-            }
 
             RefreshFullScreenLabel();
             ApplyPause();
@@ -799,10 +915,8 @@ namespace Ring.UI
                 settingsPanel.SetActive(false);
             }
 
-            if (mainMenuCanvas != null)
-            {
-                mainMenuCanvas.sortingOrder = menuSortingOrder;
-            }
+            // 只收起面板自身。TopCanvas 是常驻置顶的顶层容器，不随设置面板开合而隐藏或还原层级，
+            // 否则它下面的结算 / 改键等其它顶层界面会一起被关掉。
 
             ClearPause();
 
@@ -991,6 +1105,9 @@ namespace Ring.UI
 
         private void ApplyState(MatchState state)
         {
+            // 顶层画布在所有状态下都保持激活 + 置顶；幂等兜底，不改变任何子面板。
+            EnsureTopCanvasOnTop();
+
             bool menu = state == MatchState.MainMenu;
             bool running = state.IsRunning();
             bool finished = state.IsFinished();
@@ -1101,22 +1218,60 @@ namespace Ring.UI
         }
 
         /// <summary>
-        /// 没指定贴图的 Image 画出来就是一块纯色。这类装饰层如果铺在按钮上面，按钮就"看不见但还能点"，
-        /// 排错时很费劲，所以运行时先关掉并提示。指定了贴图（或半透明）就不动。
+        /// 关掉战斗画布里「无贴图 + 不透明 + 铺满全屏」的纯色占位底图。
+        /// 战斗画布是 Screen Space - Overlay，会画在 Main Camera 渲染的世界之上；
+        /// 这种全屏纯色 Image 一旦显示，就会把地图与角色（世界空间 SpriteRenderer）整块盖住。
+        /// 有美术贴图、半透明、或不是全屏拉伸的 Image 一律不动，避免误伤按钮与装饰。
         /// </summary>
-        private void HideEmptyBackdrop(Image image, string reason)
+        private void DisableBattleBackdrops()
         {
-            if (image == null || !image.enabled || image.sprite != null || image.color.a < 0.99f)
+            if (!hideBattleBackdrops || battleCanvas == null)
             {
                 return;
             }
 
-            image.enabled = false;
-            Debug.LogWarning(
-                "[界面] 运行时把 " + image.name + " 关掉了（" + reason + "）。它是没有贴图的纯色 Image；"
-                + "要么给它指定贴图，要么把它排到按钮前面，要么在场景里直接关掉这个 Image，"
-                + "也可以在 GameUiController 上关掉 hideEmptyBackdrops。",
-                this);
+            Image[] images = battleCanvas.GetComponentsInChildren<Image>(true);
+            for (int i = 0; i < images.Length; i++)
+            {
+                Image image = images[i];
+                if (!IsOpaqueFullScreenSolid(image))
+                {
+                    continue;
+                }
+
+                image.enabled = false;
+                Debug.LogWarning(
+                    "[界面] 运行时把战斗画布里的 " + image.name + " 关掉了：它是"
+                    + "「无贴图 + 不透明 + 铺满全屏」的纯色 Image，Screen Space - Overlay 会把它画在"
+                    + "世界空间的地图与角色之上，导致开局后看不到战场。建议直接在场景里取消该 Image 的勾选"
+                    + "（或给它指定贴图 / 降低 alpha）；也可以在 GameUiController 上关掉 hideBattleBackdrops。",
+                    this);
+            }
+        }
+
+        /// <summary>判定：启用中、无贴图、不透明、且四边拉伸铺满父级（anchorMin 0,0 / anchorMax 1,1、无缩进）。</summary>
+        private static bool IsOpaqueFullScreenSolid(Image image)
+        {
+            if (image == null || !image.enabled || image.sprite != null || image.color.a < 0.99f)
+            {
+                return false;
+            }
+
+            RectTransform rect = image.rectTransform;
+            if (rect.anchorMin.sqrMagnitude > 0.0001f
+                || (rect.anchorMax - Vector2.one).sqrMagnitude > 0.0001f)
+            {
+                return false;
+            }
+
+            // stretch 到父级且没有明显边距：真正的全屏铺底，而非某个定宽控件内部的填充。
+            if (Mathf.Abs(rect.offsetMin.x) > 1f || Mathf.Abs(rect.offsetMin.y) > 1f
+                || Mathf.Abs(rect.offsetMax.x) > 1f || Mathf.Abs(rect.offsetMax.y) > 1f)
+            {
+                return false;
+            }
+
+            return true;
         }
 
         private static GameObject FindGameObject(Transform root, string name)

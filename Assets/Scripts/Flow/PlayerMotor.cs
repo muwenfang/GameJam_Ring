@@ -30,6 +30,7 @@ namespace Ring.Flow
         private CombatBody body;
         private SwordsmanSpriteAnimation spriteAnimation;
         private StrongmanSpriteAnimation strongmanAnimation;
+        private SpartanSpriteAnimation spartanAnimation;
         private bool wasMoving;
 
         public bool HasDodgeInvulnerability => body != null && body.HasDodgeInvulnerability;
@@ -44,7 +45,8 @@ namespace Ring.Flow
 
         private void Update()
         {
-            if (instance == null || body == null || instance.IsDead)
+            // 场景中可能残留旧的测试 PlayerMotor；只有真正的玩家角色读取全局输入。
+            if (instance == null || body == null || !instance.IsPlayer || instance.IsDead)
             {
                 return;
             }
@@ -57,7 +59,11 @@ namespace Ring.Flow
 
             Vector2 axis = input.MoveAxis;
             Vec2 move = new Vec2(axis.x, axis.y);
-            body.SetMoveInput(move);
+            // 攻击动画期间保留施放时锁定的朝向，避免移动输入把 SpriteRenderer.flipX 改回去。
+            bool actionPlaying = (SpriteAnimation != null && SpriteAnimation.IsActing)
+                                 || (StrongmanAnimation != null && StrongmanAnimation.IsActing)
+                                 || (SpartanAnimation != null && SpartanAnimation.IsActing);
+            body.SetMoveInput(move, updateFacing: !actionPlaying);
 
             bool moving = move.SqrMagnitude > CombatMath.Epsilon &&
                           !instance.Combat.Immobile && !instance.Derived.Immobile;
@@ -68,9 +74,16 @@ namespace Ring.Flow
                 body.RequestDodge(move);
             }
 
-            if (input.JumpPressed)
+            if (input.JumpPressed && body.RequestJump())
             {
-                body.RequestJump();
+                // 跳跃分镜显式绑定：与 SetMoving / PlayPunch / PlayDash 一样由输入适配层驱动。
+                // 力士有 Jump_00~07 分镜；剑士没有跳跃序列帧，保持当前跑动/站立帧即可。
+                // 动画组件内部对 IsAirborne 的轮询仅作兜底（覆盖 AI / 技能起跳），并做幂等保护。
+                StrongmanSpriteAnimation strongman = StrongmanAnimation;
+                if (strongman != null)
+                {
+                    strongman.PlayJump();
+                }
             }
 
             if (logActionInputs && (input.DodgePressed || input.JumpPressed))
@@ -111,6 +124,7 @@ namespace Ring.Flow
             {
                 strongman.SetMoving(moving);
             }
+            SpartanAnimation?.SetMoving(moving);
         }
 
         private SwordsmanSpriteAnimation SpriteAnimation
@@ -136,6 +150,15 @@ namespace Ring.Flow
                 }
 
                 return strongmanAnimation;
+            }
+        }
+
+        private SpartanSpriteAnimation SpartanAnimation
+        {
+            get
+            {
+                if (spartanAnimation == null) spartanAnimation = GetComponentInChildren<SpartanSpriteAnimation>();
+                return spartanAnimation;
             }
         }
     }
