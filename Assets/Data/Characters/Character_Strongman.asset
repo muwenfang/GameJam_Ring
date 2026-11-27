@@ -13,10 +13,10 @@ MonoBehaviour:
   m_Name: Character_Strongman
   m_EditorClassIdentifier: 
   persona: 5
-  displayName: "力士"
-  positioning: "近战控制 / 击退 / 眩晕"
-  traitName: "力量"
-  traitDescription: ""
+  displayName: "\u529B\u58EB"
+  positioning: "\u8FD1\u6218\u63A7\u5236 / \u51FB\u9000 / \u7729\u6655"
+  traitName: "\u529B\u91CF"
+  traitDescription: 
   maxHealth: 120
   defense: 90
   damageReduction: 0.18
@@ -25,7 +25,7 @@ MonoBehaviour:
   jumpHeightCells: 2
   attackIntervalSeconds: 0.9
   basicAttack:
-    attackName: "出拳"
+    attackName: "\u51FA\u62F3"
     damage: 3
     windupSeconds: 0.2
     rangeCells: 1
@@ -34,8 +34,8 @@ MonoBehaviour:
     projectileCount: 1
     spreadDegrees: 0
     returns: 0
-  dodgeDistanceCells: 3
+  dodgeDistanceCells: 1
   dodgeDurationSeconds: 0.25
-  dodgeCooldownSeconds: 3
+  dodgeCooldownSeconds: 0.5
   dodgeGrantsInvulnerability: 1
-  designNotes: "每第 3 次命中同一目标的眩晕属于特质逻辑，不在基础数值内。闪避三项数值文档未给，为占位默认值。"
+  designNotes: "\u6BCF\u7B2C 3 \u6B21\u547D\u4E2D\u540C\u4E00\u76EE\u6807\u7684\u7729\u6655\u5C5E\u4E8E\u7279\u8D28\u903B\u8F91\uFF0C\u4E0D\u5728\u57FA\u7840\u6570\u503C\u5185\u3002\u95EA\u907F\u4E09\u9879\u6570\u503C\u6587\u6863\u672A\u7ED9\uFF0C\u4E3A\u5360\u4F4D\u9ED8\u8BA4\u503C\u3002"

@@ -389,7 +389,7 @@ namespace Ring.Flow
                 Source = "弹道"
             });
 
-            if (!result.Blocked)
+            if (HitLanded(result))
             {
                 ApplyStatuses(victim, projectile.Spec.BuildStatuses());
                 if (projectile.Spec.Slot == (int)AbilitySlot.BasicAttack && basicHit.Stunned)
@@ -432,7 +432,7 @@ namespace Ring.Flow
                 DamageResult result = victim.TakeDamage(new DamageRequest
                 {
                     AttackerId = instance.Id,
-                OutgoingMultiplier = instance.Derived.DamageDealtMultiplier,
+                    OutgoingMultiplier = instance.Derived.DamageDealtMultiplier,
                     TargetId = victim.Id,
                     RawDamage = damage,
                     Tags = tags,
@@ -442,7 +442,7 @@ namespace Ring.Flow
                     Source = definition.AbilityName
                 });
 
-                if (!result.Blocked)
+                if (HitLanded(result))
                 {
                     if (slowPercent > 0f && slowSeconds > 0f)
                     {
@@ -612,7 +612,7 @@ namespace Ring.Flow
                 DamageResult result = victim.TakeDamage(new DamageRequest
                 {
                     AttackerId = instance.Id,
-                OutgoingMultiplier = instance.Derived.DamageDealtMultiplier,
+                    OutgoingMultiplier = instance.Derived.DamageDealtMultiplier,
                     TargetId = victim.Id,
                     RawDamage = damage,
                     Tags = DamageTags.Skill,
@@ -622,12 +622,12 @@ namespace Ring.Flow
                     Source = definition.AbilityName
                 });
 
-                if (!result.Blocked && !result.Killed)
+                if (HitLanded(result) && !result.Killed)
                 {
                     instance.NotifyDamageDealt();
                 }
 
-                if (!result.Blocked && stun > 0f)
+                if (HitLanded(result) && stun > 0f)
                 {
                     victim.ApplyStun(stun, definition.StunResistanceSeconds);
                 }
@@ -726,7 +726,7 @@ namespace Ring.Flow
                 Source = definition.AbilityName
             });
 
-            if (result.Blocked)
+            if (!HitLanded(result))
             {
                 return;
             }
@@ -877,7 +877,7 @@ namespace Ring.Flow
                 Source = definition.AbilityName
             });
 
-            if (!result.Blocked)
+            if (HitLanded(result))
             {
                 instance.NotifyDamageDealt();
                 if (hit.Stunned)
@@ -1116,6 +1116,12 @@ namespace Ring.Flow
                 default:
                     return Color.white;
             }
+        }
+
+        /// <summary>命中是否落地：即使伤害被护盾完全吸收，也算命中（用于叠层、控制与特质）。</summary>
+        private static bool HitLanded(DamageResult result)
+        {
+            return result != null && (!result.Blocked || result.ShieldAbsorbed > 0f);
         }
 
         private static Vec2 ToVec2(Vector2 value) => new Vec2(value.x, value.y);

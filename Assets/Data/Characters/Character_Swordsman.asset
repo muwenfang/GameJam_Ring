@@ -13,10 +13,10 @@ MonoBehaviour:
   m_Name: Character_Swordsman
   m_EditorClassIdentifier: 
   persona: 0
-  displayName: "剑客"
-  positioning: "最高机动，高频连击"
-  traitName: "剑意"
-  traitDescription: ""
+  displayName: "\u5251\u5BA2"
+  positioning: "\u6700\u9AD8\u673A\u52A8\uFF0C\u9AD8\u9891\u8FDE\u51FB"
+  traitName: "\u5251\u610F"
+  traitDescription: 
   maxHealth: 100
   defense: 70
   damageReduction: 0.14
@@ -25,7 +25,7 @@ MonoBehaviour:
   jumpHeightCells: 2
   attackIntervalSeconds: 0.7
   basicAttack:
-    attackName: "近战横斩"
+    attackName: "\u8FD1\u6218\u6A2A\u65A9"
     damage: 4
     windupSeconds: 0.15
     rangeCells: 2
@@ -34,8 +34,8 @@ MonoBehaviour:
     projectileCount: 1
     spreadDegrees: 0
     returns: 0
-  dodgeDistanceCells: 3
+  dodgeDistanceCells: 1
   dodgeDurationSeconds: 0.25
-  dodgeCooldownSeconds: 3
+  dodgeCooldownSeconds: 0.5
   dodgeGrantsInvulnerability: 1
-  designNotes: "平A范围文档自相矛盾（正前方 2 格 vs 1 格长×2 格宽），暂按 2 格长、2 格宽记录。闪避三项数值文档未给，为占位默认值。"
+  designNotes: "\u5E73A\u8303\u56F4\u6587\u6863\u81EA\u76F8\u77DB\u76FE\uFF08\u6B63\u524D\u65B9 2 \u683C vs 1 \u683C\u957F\xD72 \u683C\u5BBD\uFF09\uFF0C\u6682\u6309 2 \u683C\u957F\u30012 \u683C\u5BBD\u8BB0\u5F55\u3002\u95EA\u907F\u4E09\u9879\u6570\u503C\u6587\u6863\u672A\u7ED9\uFF0C\u4E3A\u5360\u4F4D\u9ED8\u8BA4\u503C\u3002"

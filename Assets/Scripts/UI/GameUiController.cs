@@ -40,6 +40,8 @@ namespace Ring.UI
         private const string SettingsButtonName = "Setting";
         private const string ExitButtonName = "Exit";
         private const string FullScreenButtonName = "FullScreen";
+        private const string InputButtonName = "Input";
+        private const string KeyBindingPanelName = "KeyBindingPanel";
         private const string CloseSettingsButtonName = "CloseSetting";
         private const string VolumeSliderName = "AudioSlider";
         private const string MenuBackdropName = "MenuImage";
@@ -81,6 +83,14 @@ namespace Ring.UI
         [SerializeField]
         [Tooltip("全屏/退出全屏按钮；留空时按名字自动找。")]
         private Button fullScreenButton;
+
+        [SerializeField]
+        [Tooltip("设置面板里的「键位调整」按钮（场景里名为 Input，挂在 TopCanvas/SettingPanel 下）；留空时按名字自动找。")]
+        private Button inputButton;
+
+        [SerializeField]
+        [Tooltip("可选：游戏内键位调整面板，由用户在场景里手工搭建后拖入；留空时编辑器下打开菜单「钟声/输入映射/改键面板」。")]
+        private GameObject keyBindingPanel;
 
         [SerializeField]
         [Tooltip("全屏按钮上的文字，会跟着全屏状态改；留空时取按钮下的第一个 Text。")]
@@ -420,6 +430,18 @@ namespace Ring.UI
                 fullScreenButton = FindComponent<Button>(root, FullScreenButtonName);
             }
 
+            // 「键位调整」按钮挂在 TopCanvas/SettingPanel 下，不在 MainMenu Canvas 的子树里，
+            // 所以先从设置面板找，再回退到主菜单与全场景（名字大小写不敏感）。
+            if (inputButton == null)
+            {
+                inputButton = FindInputButton(root, settingsPanel);
+            }
+
+            if (keyBindingPanel == null)
+            {
+                keyBindingPanel = FindGameObjectAnywhere(KeyBindingPanelName);
+            }
+
             if (volumeSlider == null)
             {
                 volumeSlider = FindComponent<Slider>(root, VolumeSliderName);
@@ -499,6 +521,7 @@ namespace Ring.UI
             Bind(startButton, "开始游戏", HandleStartClicked);
             Bind(exitButton, "退出游戏", HandleExitClicked);
             Bind(fullScreenButton, "全屏", HandleFullScreenClicked);
+            Bind(inputButton, "键位调整", HandleInputClicked);
         }
 
         private void Bind(Button button, string label, UnityEngine.Events.UnityAction action)
@@ -610,6 +633,52 @@ namespace Ring.UI
         public void ExitGameFromUi()
         {
             HandleExitClicked();
+        }
+
+        /// <summary>设置面板里的「键位调整」按钮回调（由代码按名字自动绑定）。</summary>
+        private void HandleInputClicked()
+        {
+            OpenKeyBindings();
+        }
+
+        /// <summary>
+        /// 「键位调整」按钮专用：Unity 的 OnClick 下拉只列出返回 void 的 public 无参方法，
+        /// private 的 <see cref="HandleInputClicked"/> 选不到；此包装供 Inspector 手工拖绑。
+        /// 注意：按钮平时已由代码按名字自动绑定，两种绑定方式二选一即可 ——
+        /// 同时绑会让一次点击切换两次面板（打开后立刻关闭）。
+        /// </summary>
+        public void OpenKeyBindingsFromUi()
+        {
+            OpenKeyBindings();
+        }
+
+        private void OpenKeyBindings()
+        {
+            if (logUi)
+            {
+                Debug.Log("[界面] 点击键位调整。", this);
+            }
+
+            // 用户手搭的游戏内键位面板优先：有就切换显隐，代码不创建任何 UI 物体。
+            if (keyBindingPanel != null)
+            {
+                keyBindingPanel.SetActive(!keyBindingPanel.activeSelf);
+                return;
+            }
+
+#if UNITY_EDITOR
+            // 面板还没搭时，退到工程自带的编辑器改键窗口（菜单「钟声/输入映射/改键面板」）。
+            if (!EditorApplication.ExecuteMenuItem("钟声/输入映射/改键面板"))
+            {
+                Debug.LogWarning(
+                    "[界面] 找不到菜单「钟声/输入映射/改键面板」。请把键位调整面板拖进 GameUiController 的 Key Binding Panel 槽。",
+                    this);
+            }
+#else
+            Debug.LogWarning(
+                "[界面] 游戏内键位调整面板尚未搭建：请把面板拖进 GameUiController 的 Key Binding Panel 槽。",
+                this);
+#endif
         }
 
         private void HandleFullScreenClicked()
@@ -1054,6 +1123,78 @@ namespace Ring.UI
         {
             Transform found = FindTransform(root, name);
             return found != null ? found.gameObject : null;
+        }
+
+        /// <summary>
+        /// 找「键位调整」按钮：优先设置面板子级（TopCanvas/SettingPanel），再主菜单，最后全场景。
+        /// 场景里按钮物体名为 "Input"、文字子物体名为 "input"，故统一大小写不敏感匹配。
+        /// </summary>
+        private static Button FindInputButton(Transform menuRoot, GameObject panel)
+        {
+            if (panel != null)
+            {
+                Button inPanel = FindButtonNamed(panel.transform, InputButtonName);
+                if (inPanel != null)
+                {
+                    return inPanel;
+                }
+            }
+
+            if (menuRoot != null)
+            {
+                Button inMenu = FindButtonNamed(menuRoot, InputButtonName);
+                if (inMenu != null)
+                {
+                    return inMenu;
+                }
+            }
+
+            Button[] buttons = FindObjectsByType<Button>(FindObjectsInactive.Include);
+            for (int i = 0; i < buttons.Length; i++)
+            {
+                if (buttons[i] != null
+                    && string.Equals(buttons[i].name, InputButtonName, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return buttons[i];
+                }
+            }
+
+            return null;
+        }
+
+        private static Button FindButtonNamed(Transform root, string name)
+        {
+            if (root == null)
+            {
+                return null;
+            }
+
+            Button[] buttons = root.GetComponentsInChildren<Button>(true);
+            for (int i = 0; i < buttons.Length; i++)
+            {
+                if (string.Equals(buttons[i].name, name, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return buttons[i];
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>全场景按名字找 GameObject（含未激活物体）；给可选的手工面板留一个按名兜底。</summary>
+        private static GameObject FindGameObjectAnywhere(string name)
+        {
+            Transform[] all = FindObjectsByType<Transform>(FindObjectsInactive.Include);
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (all[i] != null
+                    && string.Equals(all[i].name, name, System.StringComparison.OrdinalIgnoreCase))
+                {
+                    return all[i].gameObject;
+                }
+            }
+
+            return null;
         }
 
         private static T FindComponent<T>(Transform root, string name) where T : Component

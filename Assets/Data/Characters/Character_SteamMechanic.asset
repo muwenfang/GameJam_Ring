@@ -13,10 +13,10 @@ MonoBehaviour:
   m_Name: Character_SteamMechanic
   m_EditorClassIdentifier: 
   persona: 1
-  displayName: "蒸汽机械师"
-  positioning: "近身最高爆发，打完拉开"
-  traitName: "过载损耗"
-  traitDescription: ""
+  displayName: "\u84B8\u6C7D\u673A\u68B0\u5E08"
+  positioning: "\u8FD1\u8EAB\u6700\u9AD8\u7206\u53D1\uFF0C\u6253\u5B8C\u62C9\u5F00"
+  traitName: "\u8FC7\u8F7D\u635F\u8017"
+  traitDescription: 
   maxHealth: 110
   defense: 82
   damageReduction: 0.164
@@ -25,7 +25,7 @@ MonoBehaviour:
   jumpHeightCells: 2
   attackIntervalSeconds: 0.8
   basicAttack:
-    attackName: "蒸汽铳（散弹）"
+    attackName: "\u84B8\u6C7D\u94F3\uFF08\u6563\u5F39\uFF09"
     damage: 2
     windupSeconds: 0.2
     rangeCells: 5
@@ -34,8 +34,8 @@ MonoBehaviour:
     projectileCount: 4
     spreadDegrees: 28
     returns: 0
-  dodgeDistanceCells: 3
+  dodgeDistanceCells: 1
   dodgeDurationSeconds: 0.25
-  dodgeCooldownSeconds: 3
+  dodgeCooldownSeconds: 0.5
   dodgeGrantsInvulnerability: 1
-  designNotes: "蒸汽铳为 28° 扇形、4 枚弹片，每枚 2 点伤害，弹丸均匀分布在 ±14° 内。闪避三项数值文档未给，为占位默认值。"
+  designNotes: "\u84B8\u6C7D\u94F3\u4E3A 28\xB0 \u6247\u5F62\u30014 \u679A\u5F39\u7247\uFF0C\u6BCF\u679A 2 \u70B9\u4F24\u5BB3\uFF0C\u5F39\u4E38\u5747\u5300\u5206\u5E03\u5728 \xB114\xB0 \u5185\u3002\u95EA\u907F\u4E09\u9879\u6570\u503C\u6587\u6863\u672A\u7ED9\uFF0C\u4E3A\u5360\u4F4D\u9ED8\u8BA4\u503C\u3002"

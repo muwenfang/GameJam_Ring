@@ -53,7 +53,10 @@ namespace Ring.Flow
 
         private float jumpHeight;
         private float jumpVelocity;
+        private float jumpGravity;
         private bool airborne;
+        private bool launched;
+        private Vec2 launchVelocity;
         private Transform jumpOffset;
         private SpriteRenderer spriteRenderer;
 
@@ -75,6 +78,7 @@ namespace Ring.Flow
         public Vec2 FacingVector => facing;
         public int FacingSign => facingSign;
         public bool IsAirborne => airborne;
+        public bool IsLaunched => launched;
         public bool IsDodging => dodgeRemaining > 0f;
         public bool IsPulling => pulling;
         public bool HasDodgeInvulnerability => Time.time < dodgeInvulnerableUntil;
@@ -126,6 +130,11 @@ namespace Ring.Flow
                     float step = Math.Min(knockbackRemaining, knockbackSpeed * deltaTime);
                     delta += knockbackDirection * step;
                     knockbackRemaining -= step;
+                }
+
+                if (launched)
+                {
+                    delta += launchVelocity * deltaTime;
                 }
 
                 if (!instance.Combat.Immobile && !instance.Derived.Immobile)
@@ -260,9 +269,17 @@ namespace Ring.Flow
             }
 
             float duration = Mathf.Max(0.1f, jumpDurationSeconds);
+            float actionSpeed = instance.Derived.ActionSpeedMultiplier;
+            if (actionSpeed > 0.01f)
+            {
+                duration /= actionSpeed;
+            }
             jumpHeight = 0f;
             jumpVelocity = 4f * height / duration;
+            jumpGravity = 8f * height / (duration * duration);
             airborne = true;
+            launched = false;
+            launchVelocity = Vec2.Zero;
             if (logActions)
             {
                 Debug.Log("[" + instance.DisplayName + "] 跳跃 " + height + " 格", this);
@@ -328,6 +345,32 @@ namespace Ring.Flow
             pulling = false;
         }
 
+        /// <summary>击飞：水平位移 + 垂直抛物线，落地前仍可被墙体阻挡。霸体/击退免疫时不生效。</summary>
+        public bool ApplyLaunch(Vec2 direction, float horizontalCells, float heightCells, float durationSeconds = 0.7f)
+        {
+            if (instance == null || instance.IsDead || instance.Combat.KnockbackImmune)
+            {
+                return false;
+            }
+
+            float duration = Mathf.Max(0.2f, durationSeconds);
+            if (direction.SqrMagnitude <= CombatMath.Epsilon)
+            {
+                direction = -facing;
+            }
+
+            launchVelocity = direction.Normalized * (Mathf.Max(0f, horizontalCells) * unitsPerCell / duration);
+            launched = true;
+            airborne = true;
+            jumpHeight = 0f;
+            jumpVelocity = 4f * Mathf.Max(0.1f, heightCells) / duration;
+            jumpGravity = 8f * Mathf.Max(0.1f, heightCells) / (duration * duration);
+            dodgeRemaining = 0f;
+            knockbackRemaining = 0f;
+            pulling = false;
+            return true;
+        }
+
         /// <summary>强制拉回：以固定速度飞向目标点，途中仍受墙体约束。</summary>
         public void PullTo(Vec2 target, float speed, float timeoutSeconds = 1.5f)
         {
@@ -355,6 +398,11 @@ namespace Ring.Flow
             dodgeRemaining = 0f;
             knockbackRemaining = 0f;
             pulling = false;
+            launched = false;
+            airborne = false;
+            jumpHeight = 0f;
+            jumpVelocity = 0f;
+            launchVelocity = Vec2.Zero;
         }
 
         /// <summary>瞬移一段距离（冲刺/突进），仍然遵守墙体与场地边界。</summary>
@@ -379,19 +427,20 @@ namespace Ring.Flow
             if (!airborne)
             {
                 jumpHeight = 0f;
+                launched = false;
                 return;
             }
 
-            float duration = Mathf.Max(0.1f, jumpDurationSeconds);
-            float gravity = 8f * Mathf.Max(0.5f, instance.Stats != null ? instance.Stats.JumpHeightCells : 2f) /
-                            (duration * duration);
             jumpHeight += jumpVelocity * deltaTime;
-            jumpVelocity -= gravity * deltaTime;
+            jumpVelocity -= jumpGravity * deltaTime;
             if (jumpHeight <= 0f && jumpVelocity < 0f)
             {
                 jumpHeight = 0f;
                 jumpVelocity = 0f;
+                jumpGravity = 0f;
                 airborne = false;
+                launched = false;
+                launchVelocity = Vec2.Zero;
             }
         }
 

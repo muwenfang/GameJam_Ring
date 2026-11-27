@@ -23,6 +23,7 @@ namespace Ring.Abilities
         public float BasicAttackDamage;
         public float DamageDealtMultiplier;
         public float DamageTakenMultiplier;
+        public float ActionSpeedMultiplier;
         public float HealthRegenPerSecond;
         public bool Immobile;
         public bool Invulnerable;
@@ -1093,6 +1094,7 @@ namespace Ring.Abilities
             derived.MoveSpeedCellsPerSecond *= moveMultiplier;
             derived.DamageDealtMultiplier = damageMultiplier;
             derived.DamageTakenMultiplier = damageTakenMultiplier;
+            derived.ActionSpeedMultiplier = attackSpeedMultiplier;
             derived.HealthRegenPerSecond = regen;
             derived.AttackRangeCells = Math.Max(derived.AttackRangeCells, rangeOverride);
 
@@ -1103,6 +1105,11 @@ namespace Ring.Abilities
             else if (attackSpeedMultiplier > 0f && !AbilityMath.Approximately(attackSpeedMultiplier, 1f))
             {
                 derived.AttackIntervalSeconds /= attackSpeedMultiplier;
+            }
+
+            if (attackSpeedMultiplier > 0f && !AbilityMath.Approximately(attackSpeedMultiplier, 1f))
+            {
+                derived.AttackWindupSeconds = Math.Max(0f, derived.AttackWindupSeconds / attackSpeedMultiplier);
             }
 
             derived.Immobile = immobileRemaining > 0f || (ExternalStats != null && ExternalStats.Immobile);

@@ -13,10 +13,10 @@ MonoBehaviour:
   m_Name: Character_Ranger
   m_EditorClassIdentifier: 
   persona: 3
-  displayName: "精灵游侠"
-  positioning: "射程 8 格最远，脆皮"
-  traitName: "精灵之目"
-  traitDescription: ""
+  displayName: "\u7CBE\u7075\u6E38\u4FA0"
+  positioning: "\u5C04\u7A0B 8 \u683C\u6700\u8FDC\uFF0C\u8106\u76AE"
+  traitName: "\u7CBE\u7075\u4E4B\u76EE"
+  traitDescription: 
   maxHealth: 75
   defense: 75
   damageReduction: 0.125
@@ -25,7 +25,7 @@ MonoBehaviour:
   jumpHeightCells: 2
   attackIntervalSeconds: 0.6
   basicAttack:
-    attackName: "游侠短弓"
+    attackName: "\u6E38\u4FA0\u77ED\u5F13"
     damage: 3
     windupSeconds: 0.15
     rangeCells: 8
@@ -34,8 +34,8 @@ MonoBehaviour:
     projectileCount: 1
     spreadDegrees: 0
     returns: 0
-  dodgeDistanceCells: 3
+  dodgeDistanceCells: 1
   dodgeDurationSeconds: 0.25
-  dodgeCooldownSeconds: 3
+  dodgeCooldownSeconds: 0.5
   dodgeGrantsInvulnerability: 1
-  designNotes: "⚠️ 文档标注：防御 75 按 防御/500 应为 15%，表里写 12.5%（即除以 600）。此处保留文档值，校验工具会提示这条偏差。闪避三项数值文档未给，为占位默认值。"
+  designNotes: "\u26A0\uFE0F \u6587\u6863\u6807\u6CE8\uFF1A\u9632\u5FA1 75 \u6309 \u9632\u5FA1/500 \u5E94\u4E3A 15%\uFF0C\u8868\u91CC\u5199 12.5%\uFF08\u5373\u9664\u4EE5 600\uFF09\u3002\u6B64\u5904\u4FDD\u7559\u6587\u6863\u503C\uFF0C\u6821\u9A8C\u5DE5\u5177\u4F1A\u63D0\u793A\u8FD9\u6761\u504F\u5DEE\u3002\u95EA\u907F\u4E09\u9879\u6570\u503C\u6587\u6863\u672A\u7ED9\uFF0C\u4E3A\u5360\u4F4D\u9ED8\u8BA4\u503C\u3002"
