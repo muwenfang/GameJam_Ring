@@ -205,6 +205,12 @@ namespace Ring.Flow
                     // 落单者（复制体对决 / 轮空）：站在区域中心。
                     PlaceAt(duel.FirstId, center);
                 }
+
+                SetBodyArena(duel.FirstId, center);
+                if (duel.SecondId >= 0)
+                {
+                    SetBodyArena(duel.SecondId, center);
+                }
             }
 
             if (Player != null && plan.Contains(Player.Id))
@@ -282,6 +288,15 @@ namespace Ring.Flow
             }
         }
 
+        private void SetBodyArena(int participantId, Vector3 center)
+        {
+            CharacterInstance character = FindById(participantId);
+            if (character != null && character.Body != null)
+            {
+                character.Body.ConfigureArena(new Vector2(center.x, center.y), true, 6.5f, 1f);
+            }
+        }
+
         private CharacterInstance FindById(int participantId)
         {
             for (int i = 0; i < instances.Count; i++)
@@ -310,6 +325,9 @@ namespace Ring.Flow
 
             CharacterInstance instance = go.AddComponent<CharacterInstance>();
             instance.Initialize(index, stats, isPlayer);
+
+            // 玩家和 AI 共用同一个运动体：AI 后续接决策时只需要写移动输入。
+            go.AddComponent<CombatBody>();
 
             if (isPlayer && attachPlayerMotor)
             {

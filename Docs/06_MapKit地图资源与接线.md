@@ -171,4 +171,5 @@
 - **未把机制效果接入战斗**：伤害、眩晕、加速 / 减速、攻击加成仍只作用于 MapKit 自己的视觉演示（脚本注释明确「纯地图演示不含角色」），不影响 `CharacterInstance`、钟声规则与胜负判定。若要把它们接进角色数值，需要另定一套「地图机制 → 战斗系统」的事件契约，属于独立改动。
 - **未合并上传的 `MapDesign_钟声.unity`**：它把六个 Z 区放在同一张「六区域对决地图」里做设计验证；本工程仍按 `Docs/05` 的层次 —— `BattleMapId` 是「这一局选哪张地图」，每图内部的 6 个区域锚点是 `MapScene.RegionAnchors`。两者层次不同，未强行统一。
 - **未自动生成任何 UI / 场景物体**，未改场景 YAML，未改 MapKit / Screenshots 任何脚本、图片、`.meta`（唯一的 `.meta` 改动是 11-25 修复 `Assets/Scripts/Maps/` 下 4 个非法 guid，属资产元数据修复，见第九节）。
-- `RegionAnchors` 仍只是预留数组，位置钟声 `BellResult.Swaps` 仍无人消费；没有转场动画、没有按地图切 BGM / 相机。
+- **状态校正（2026-11-26）**：`RegionAnchors` 已不再是预留数组——场景已建 `ArenaAnchor_Map01..06` 并填入 `MatchSpawner.Region Anchors[0..5]`；`BellResult.Swaps` 也已由 `GameFlow.RebuildArenas` 消费（见 `Docs/10` 第四节）。地图骨架（六 `MapScene` 根节点 + 碰撞地面）已由菜单生成到场景，机制脚本挂载仍需手工。
+- 没有转场动画、没有按地图切 BGM / 相机——**仍未做**；机制效果接入战斗数值仍未做（见本节第一条）。

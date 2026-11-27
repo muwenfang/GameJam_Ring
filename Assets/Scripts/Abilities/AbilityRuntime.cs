@@ -148,6 +148,28 @@ namespace Ring.Abilities
         }
     }
 
+    /// <summary>战斗状态（Buff/姿态/减速等）向技能运行时汇总的外部修正。</summary>
+    public interface IAbilityExternalStats
+    {
+        float MoveSpeedMultiplier { get; }
+        float AttackSpeedMultiplier { get; }
+        float DamageDealtMultiplier { get; }
+        float DamageTakenMultiplier { get; }
+        float DefenseMultiplier { get; }
+        float DamageReductionBonus { get; }
+        bool Immobile { get; }
+        bool Invulnerable { get; }
+    }
+
+    /// <summary>限时增益的可序列化快照，供状态回滚使用。</summary>
+    public struct AbilityModifierState
+    {
+        public int Kind;
+        public float Value;
+        public float Remaining;
+        public AbilitySlot Source;
+    }
+
     /// <summary>
     /// 角色身上的能力运行时：冷却、叠层、限时增益、特质计数、以及「属性衔接」的派生数值。
     ///
@@ -248,6 +270,9 @@ namespace Ring.Abilities
             get { return stats; }
             set { stats = value; }
         }
+
+        /// <summary>由战斗状态层注入的外部修正（减速/眩晕/姿态/护盾不在这里，护盾在伤害层）。</summary>
+        public IAbilityExternalStats ExternalStats { get; set; }
 
         public float MaxHealth
         {
@@ -472,6 +497,69 @@ namespace Ring.Abilities
             immobileRemaining = 0f;
             invulnerableRemaining = 0f;
             castCancelable = false;
+        }
+
+        /// <summary>提前结束某个槽位的限时增益（姿态提前解除时使用）。</summary>
+        public void CancelModifiers(AbilitySlot source)
+        {
+            for (int i = modifiers.Count - 1; i >= 0; i--)
+            {
+                if (modifiers[i].Source == source)
+                {
+                    modifiers.RemoveAt(i);
+                }
+            }
+        }
+
+        /// <summary>抓取当前所有限时增益，供快照回滚。</summary>
+        public AbilityModifierState[] CaptureModifiers()
+        {
+            var result = new AbilityModifierState[modifiers.Count];
+            for (int i = 0; i < modifiers.Count; i++)
+            {
+                TimedModifier modifier = modifiers[i];
+                result[i] = new AbilityModifierState
+                {
+                    Kind = (int)modifier.Kind,
+                    Value = modifier.Value,
+                    Remaining = modifier.Remaining,
+                    Source = modifier.Source
+                };
+            }
+
+            return result;
+        }
+
+        /// <summary>用快照替换当前限时增益。快照里的非法项会被忽略。</summary>
+        public void RestoreModifiers(AbilityModifierState[] states)
+        {
+            modifiers.Clear();
+            if (states == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < states.Length; i++)
+            {
+                AbilityModifierState state = states[i];
+                if (state.Value <= 0f || state.Remaining <= 0f)
+                {
+                    continue;
+                }
+
+                if (state.Kind < 0 || state.Kind > (int)ModifierKind.HealthRegen)
+                {
+                    continue;
+                }
+
+                modifiers.Add(new TimedModifier
+                {
+                    Kind = (ModifierKind)state.Kind,
+                    Value = state.Value,
+                    Remaining = state.Remaining,
+                    Source = state.Source
+                });
+            }
         }
 
         private void RegisterModifier(ModifierKind kind, float value, float duration, AbilitySlot source)
@@ -984,6 +1072,17 @@ namespace Ring.Abilities
                 }
             }
 
+            if (ExternalStats != null)
+            {
+                IAbilityExternalStats external = ExternalStats;
+                moveMultiplier *= Math.Max(0f, external.MoveSpeedMultiplier);
+                attackSpeedMultiplier *= Math.Max(0.01f, external.AttackSpeedMultiplier);
+                damageMultiplier *= Math.Max(0f, external.DamageDealtMultiplier);
+                damageTakenMultiplier *= Math.Max(0f, external.DamageTakenMultiplier);
+                defenseMultiplier *= Math.Max(0f, external.DefenseMultiplier);
+                reductionAdd += external.DamageReductionBonus;
+            }
+
             if (speedScalesWithHealth)
             {
                 moveMultiplier *= HealthRatio;
@@ -1006,8 +1105,8 @@ namespace Ring.Abilities
                 derived.AttackIntervalSeconds /= attackSpeedMultiplier;
             }
 
-            derived.Immobile = immobileRemaining > 0f;
-            derived.Invulnerable = invulnerableRemaining > 0f;
+            derived.Immobile = immobileRemaining > 0f || (ExternalStats != null && ExternalStats.Immobile);
+            derived.Invulnerable = invulnerableRemaining > 0f || (ExternalStats != null && ExternalStats.Invulnerable);
             derived.CastCancelable = castCancelable;
             derived.CastRemaining = immobileRemaining;
 

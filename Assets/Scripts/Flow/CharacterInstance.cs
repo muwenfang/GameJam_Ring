@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Ring.Abilities;
 using Ring.Bells;
 using Ring.Characters;
+using Ring.Combat;
 using UnityEngine;
 
 namespace Ring.Flow
@@ -10,8 +11,8 @@ namespace Ring.Flow
     /// <summary>
     /// 场上一个角色实例：把「基础数值资产」「钟声参与者」「血量」三件事绑在一个 GameObject 上。
     ///
-    /// 本轮没有美术与战斗，所以视觉是一个纯色方块占位；换皮时只需要替换 BuildVisual 里的 SpriteRenderer。
-    /// 血量与死亡只是给流程层推进用的，命中判定留给后续战斗层。
+    /// 战斗层：伤害统一走 DamagePipeline（防御→乘区→护盾→致死拦截），
+    /// Buff/姿态/护盾汇总到 CombatantState，0.1s 采样一次 CharacterSnapshot 供逆时/回溯使用。
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("钟声/角色实例 CharacterInstance")]
@@ -32,6 +33,16 @@ namespace Ring.Flow
 
         private AbilityLoadout loadout;
         private AbilityRuntime abilities;
+        private readonly CombatantState combat = new CombatantState();
+        private readonly SnapshotRing snapshots = new SnapshotRing();
+        private readonly DamagePipeline damagePipeline = new DamagePipeline();
+
+        private float combatTime;
+        private float invulnerableUntil;
+        private float stunResistanceUntil;
+        private float controlImmuneUntil;
+        private float nextSnapshotTime;
+        private CombatBody body;
 
         /// <summary>死亡事件（只触发一次）。</summary>
         public event Action<CharacterInstance> Died;
@@ -70,13 +81,38 @@ namespace Ring.Flow
             get { return abilities; }
         }
 
-        /// <summary>当前派生战斗数值（已含特质被动与限时增益）。</summary>
+        /// <summary>Buff/护盾/姿态聚合。</summary>
+        public CombatantState Combat
+        {
+            get { return combat; }
+        }
+
+        /// <summary>3 秒状态快照环（0.1s 采样）。</summary>
+        public SnapshotRing Snapshots
+        {
+            get { return snapshots; }
+        }
+
+        public CombatBody Body
+        {
+            get
+            {
+                if (body == null)
+                {
+                    body = GetComponent<CombatBody>();
+                }
+
+                return body;
+            }
+        }
+
+        /// <summary>当前派生战斗数值（已含特质被动、限时增益、Buff 与姿态）。</summary>
         public DerivedAbilityStats Derived
         {
             get { return abilities != null ? abilities.ComputeDerived() : default(DerivedAbilityStats); }
         }
 
-        /// <summary>移动速度（格/秒），已含「过载损耗」「风之优雅」等移速修正。</summary>
+        /// <summary>移动速度（格/秒），已含「过载损耗」「风之优雅」「减速」「举盾」等修正。</summary>
         public float MoveSpeedCellsPerSecond
         {
             get
@@ -90,11 +126,28 @@ namespace Ring.Flow
             }
         }
 
-        /// <summary>是否处于无敌（绝对防御等）。</summary>
+        /// <summary>是否处于无敌（绝对防御、闪避无敌帧等）。</summary>
         public bool IsInvulnerable
         {
-            get { return abilities != null && abilities.ComputeDerived().Invulnerable; }
+            get
+            {
+                if (combatTime < invulnerableUntil)
+                {
+                    return true;
+                }
+
+                CombatBody combatBody = Body;
+                if (combatBody != null && combatBody.HasDodgeInvulnerability)
+                {
+                    return true;
+                }
+
+                return abilities != null && abilities.ComputeDerived().Invulnerable;
+            }
         }
+
+        /// <summary>霸体：免疫眩晕/定身/减速，但不等同于无敌。</summary>
+        public bool IsControlImmune => combatTime < controlImmuneUntil;
 
         public PersonaId Persona
         {
@@ -157,9 +210,19 @@ namespace Ring.Flow
             loadout.TryAdd(new AbilityCard(persona, AbilitySlot.BasicAttack), out _);
             abilities = new AbilityRuntime(loadout, new CharacterStatAdapter(stats));
             abilities.SetHealth(currentHealth, maxHealth);
+            abilities.ExternalStats = combat;
+            combat.OwnerId = id;
+            combat.Reset();
+            snapshots.Clear();
+            combatTime = 0f;
+            invulnerableUntil = 0f;
+            stunResistanceUntil = 0f;
+            controlImmuneUntil = 0f;
+            nextSnapshotTime = 0f;
             RefreshLoadout();
 
             BuildVisual();
+            CaptureSnapshot();
         }
 
         private void Update()
@@ -169,79 +232,448 @@ namespace Ring.Flow
                 return;
             }
 
-            abilities.Tick(Time.deltaTime);
+            float deltaTime = Time.deltaTime;
+            combatTime += deltaTime;
+            abilities.Tick(deltaTime);
+            combat.Tick(deltaTime, HandleDotTick);
             abilities.NotifyHealth(currentHealth);
 
-            if (IsDead)
+            if (!IsDead)
             {
-                return;
+                // 斯巴达韧性、沉腰调息这类持续回血由运行时累计，这里统一落到身上。
+                float regen = abilities.ConsumeRegen();
+                if (regen > 0f)
+                {
+                    HealSilently(regen);
+                }
             }
 
-            // 斯巴达韧性、沉腰调息这类持续回血由运行时累计，这里统一落到身上。
-            float regen = abilities.ConsumeRegen();
-            if (regen > 0f)
+            if (combatTime >= nextSnapshotTime)
             {
-                HealSilently(regen);
+                CaptureSnapshot();
+                nextSnapshotTime = combatTime + snapshots.Interval;
             }
         }
 
-        /// <summary>
-        /// 受击入口：先看无敌（绝对防御等），再按派生减伤与受伤倍率结算，
-        /// 致死一击会先问「逆时」能不能回滚；真正扣到 0 才触发 Died。
-        /// </summary>
+        // ---------------- 伤害 ----------------
+
+        /// <summary>兼容旧调用：无攻击者、无标签的普通伤害。</summary>
         public void TakeDamage(float rawDamage)
         {
-            if (IsDead || rawDamage <= 0f)
+            TakeDamage(new DamageRequest
             {
-                return;
+                TargetId = participantId,
+                RawDamage = rawDamage,
+                Tags = DamageTags.None
+            });
+        }
+
+        /// <summary>
+        /// 统一受击入口：防御减伤 → 造成/承受乘区 → 护盾 → 致死判定（逆时在这里拦截）。
+        /// </summary>
+        public DamageResult TakeDamage(DamageRequest request)
+        {
+            var result = new DamageResult();
+            if (request == null || request.RawDamage <= 0f || IsDead)
+            {
+                return result;
             }
+
+            request.TargetId = participantId;
 
             if (abilities == null)
             {
-                float plain = Stats != null ? Stats.MitigateDamage(rawDamage) : rawDamage;
-                currentHealth = Mathf.Max(0f, currentHealth - plain);
+                float plain = Stats != null ? Stats.MitigateDamage(request.RawDamage) : request.RawDamage;
+                result.HealthDamage = Mathf.Max(0f, plain);
+                currentHealth = Mathf.Max(0f, currentHealth - result.HealthDamage);
                 RaiseHealthChanged();
+                RaiseDamagedEvent(request, result);
                 if (currentHealth <= 0f)
                 {
-                    RaiseDied();
+                    RaiseDied(request.AttackerId);
                 }
 
-                return;
+                return result;
             }
 
             DerivedAbilityStats derived = abilities.ComputeDerived();
-            if (derived.Invulnerable)
-            {
-                return;
-            }
 
-            float actual = CharacterBalance.ApplyReduction(rawDamage, derived.DamageReduction)
-                           * Mathf.Max(0f, derived.DamageTakenMultiplier);
-            if (actual <= 0f)
-            {
-                return;
-            }
+            // 资产里的 DamageReduction 只是「基础防御」的预换算值；防御被增益/削防改动后，
+            // 这里按同一策略重算，并把只来自增益的额外减伤保留下来，避免重复计算。
+            float baseReduction = Stats != null
+                ? CharacterBalance.ReductionFor(Persona, Stats.Defense)
+                : 0f;
+            float defenseReduction = CharacterBalance.ReductionFor(Persona, derived.Defense);
+            float damageReduction = Mathf.Clamp01(
+                defenseReduction + derived.DamageReduction - baseReduction);
 
-            if (currentHealth - actual <= 0f)
+            // 举盾只挡正面 180°：背后的攻击不能吃到姿态的 0.1 倍率。
+            float incomingMultiplier = derived.DamageTakenMultiplier;
+            if (IsFrontalOnlyBackHit(request))
             {
-                float restored;
-                if (abilities.TryConsumeLethalHit(out restored))
+                float stanceMultiplier = combat.Stance.DamageTakenMultiplier;
+                if (stanceMultiplier > 0.0001f)
                 {
-                    // 「逆时」把生命倒回 3 秒前，这一击不算死亡。
-                    ApplyRestoredHealth(restored);
-                    return;
+                    incomingMultiplier /= stanceMultiplier;
                 }
             }
 
-            currentHealth = Mathf.Max(0f, currentHealth - actual);
-            abilities.NotifyDamageTaken(actual);
-            abilities.NotifyHealth(currentHealth);
-            RaiseHealthChanged();
+            var stats = new DamageStats
+            {
+                Defense = derived.Defense,
+                DamageReduction = damageReduction,
+                OutgoingMultiplier = Mathf.Max(0f, request.OutgoingMultiplier),
+                IncomingMultiplier = Mathf.Max(0f, incomingMultiplier),
+                Shield = combat.Shield.Amount,
+                Invulnerable = IsInvulnerable
+            };
+
+            result = damagePipeline.Resolve(request, stats, currentHealth, TryInterceptLethal);
+            if (result.ShieldAbsorbed > 0f)
+            {
+                combat.Shield.Absorb(result.ShieldAbsorbed);
+            }
+
+            if (result.HealthDamage > 0f || result.ShieldAbsorbed > 0f)
+            {
+                // 被护盾完全吸收也算「挨打」：调息判定与受击反馈都依赖这一下。
+                combat.NotifyHit();
+                ApplyKnockback(request);
+            }
+
+            if (result.Blocked)
+            {
+                RaiseDamagedEvent(request, result);
+                return result;
+            }
+
+            if (result.HealthDamage > 0f)
+            {
+                currentHealth = Mathf.Max(0f, currentHealth - result.HealthDamage);
+                abilities.NotifyDamageTaken(result.HealthDamage);
+                abilities.NotifyHealth(currentHealth);
+                RaiseHealthChanged();
+            }
+
+            RaiseDamagedEvent(request, result);
 
             if (currentHealth <= 0f)
             {
-                RaiseDied();
+                RaiseDied(request.AttackerId);
             }
+
+            return result;
+        }
+
+        private bool TryInterceptLethal()
+        {
+            if (abilities == null)
+            {
+                return false;
+            }
+
+            float restored;
+            if (!abilities.TryConsumeLethalHit(out restored))
+            {
+                return false;
+            }
+
+            if (!Rewind(abilities.RewindSeconds, StateRestoreMode.Full))
+            {
+                ApplyRestoredHealth(restored);
+            }
+
+            return true;
+        }
+
+        private bool IsFrontalOnlyBackHit(DamageRequest request)
+        {
+            if (combat == null || !combat.Stance.IsActive)
+            {
+                return false;
+            }
+
+            CombatStanceSpec stance = combat.Stance.Current;
+            if (stance == null || !stance.FrontalOnly)
+            {
+                return false;
+            }
+
+            if (request.Direction.SqrMagnitude <= CombatMath.Epsilon)
+            {
+                return false;
+            }
+
+            Vec2 facing = Body != null ? Body.FacingVector : Vec2.Right;
+            Vec2 toSource = new Vec2(-request.Direction.X, -request.Direction.Y);
+            return Vec2.Dot(toSource.Normalized, facing) < 0f;
+        }
+
+        private void ApplyKnockback(DamageRequest request)
+        {
+            if (request.KnockbackCells <= 0f || combat.KnockbackImmune)
+            {
+                return;
+            }
+
+            CombatBody combatBody = Body;
+            if (combatBody == null)
+            {
+                return;
+            }
+
+            Vec2 direction = request.Direction;
+            if (direction.SqrMagnitude <= CombatMath.Epsilon)
+            {
+                direction = -combatBody.FacingVector;
+            }
+
+            combatBody.ApplyKnockback(direction, request.KnockbackCells);
+        }
+
+        private void RaiseDamagedEvent(DamageRequest request, DamageResult result)
+        {
+            CombatEvents.RaiseDamaged(new DamageEvent(
+                request.AttackerId,
+                participantId,
+                result.HealthDamage,
+                result.ShieldAbsorbed,
+                request.Tags,
+                result.Killed || result.LethalIntercepted,
+                result.Blocked));
+        }
+
+        private void HandleDotTick(float amount, int sourceId)
+        {
+            if (IsDead || amount <= 0f)
+            {
+                return;
+            }
+
+            TakeDamage(new DamageRequest
+            {
+                AttackerId = sourceId,
+                TargetId = participantId,
+                RawDamage = amount,
+                Tags = DamageTags.DamageOverTime,
+                Source = "持续伤害"
+            });
+        }
+
+        // ---------------- 控制/状态 ----------------
+
+        public bool ApplyStatus(CombatStatusSpec spec)
+        {
+            if (IsDead || spec == null)
+            {
+                return false;
+            }
+
+            combat.ApplyStatus(spec);
+            return true;
+        }
+
+        /// <summary>眩晕；抗性窗口内的眩晕无效。返回是否真的晕住。</summary>
+        public bool ApplyStun(float seconds, float resistanceSeconds = 1.5f)
+        {
+            if (seconds <= 0f || IsDead)
+            {
+                return false;
+            }
+
+            if (combatTime < stunResistanceUntil || IsControlImmune)
+            {
+                return false;
+            }
+
+            combat.ApplyStatus(CombatStatusSpec.Stun(seconds, 0));
+            if (resistanceSeconds > 0f)
+            {
+                // 抗性窗口从眩晕结束才开始算：「眩晕后 1.5s 抗性」。
+                stunResistanceUntil = combatTime + seconds + resistanceSeconds;
+            }
+
+            return true;
+        }
+
+        /// <summary>清除全部持续伤害，但保留减速/定身等其它负面（钟表师「回溯」）。</summary>
+        public int CleanseDamageOverTime()
+        {
+            if (combat == null)
+            {
+                return 0;
+            }
+
+            List<string> ids = null;
+            var all = combat.Status.All;
+            for (int i = 0; i < all.Count; i++)
+            {
+                if (all[i].Kind == StatusKind.DamageOverTime)
+                {
+                    ids ??= new List<string>();
+                    ids.Add(all[i].Id);
+                }
+            }
+
+            if (ids == null)
+            {
+                return 0;
+            }
+
+            for (int i = 0; i < ids.Count; i++)
+            {
+                combat.Status.Remove(ids[i]);
+            }
+
+            return ids.Count;
+        }
+
+        public bool ApplyRoot(float seconds)
+        {
+            if (seconds <= 0f || IsDead || IsControlImmune)
+            {
+                return false;
+            }
+
+            combat.ApplyStatus(CombatStatusSpec.Root(seconds, 0));
+            return true;
+        }
+
+        public bool ApplySlow(float percent, float seconds)
+        {
+            if (percent <= 0f || seconds <= 0f || IsDead || IsControlImmune)
+            {
+                return false;
+            }
+
+            combat.ApplyStatus(CombatStatusSpec.Slow(percent, seconds, 0));
+            return true;
+        }
+
+        public bool ApplyVulnerability(float percent, float seconds)
+        {
+            if (percent <= 0f || seconds <= 0f || IsDead)
+            {
+                return false;
+            }
+
+            combat.ApplyStatus(CombatStatusSpec.Vulnerability(percent, seconds, 0));
+            return true;
+        }
+
+        public bool ApplyDamageOverTime(string id, float tickDamage, float tickInterval, float duration, int sourceId)
+        {
+            if (IsDead || tickDamage <= 0f || tickInterval <= 0f || duration <= 0f)
+            {
+                return false;
+            }
+
+            combat.ApplyStatus(CombatStatusSpec.DamageOverTime(id, tickDamage, tickInterval, duration, sourceId));
+            return true;
+        }
+
+        public int CleanseDebuffs(int max = 0)
+        {
+            return combat.CleanseDebuffs(max);
+        }
+
+        public void AddShield(float amount, float seconds)
+        {
+            if (amount <= 0f || IsDead)
+            {
+                return;
+            }
+
+            combat.AddShield(amount, seconds);
+        }
+
+        public void GrantInvulnerability(float seconds)
+        {
+            if (seconds <= 0f)
+            {
+                return;
+            }
+
+            invulnerableUntil = Mathf.Max(invulnerableUntil, combatTime + seconds);
+        }
+
+        public void GrantControlImmunity(float seconds)
+        {
+            if (seconds <= 0f)
+            {
+                return;
+            }
+
+            controlImmuneUntil = Mathf.Max(controlImmuneUntil, combatTime + seconds);
+        }
+
+        // ---------------- 快照/回滚 ----------------
+
+        public CharacterSnapshot CaptureSnapshot()
+        {
+            var snapshot = new CharacterSnapshot
+            {
+                Time = combatTime,
+                Health = currentHealth,
+                X = transform.position.x,
+                Y = transform.position.y,
+                Shield = combat.Shield.Amount,
+                ShieldRemaining = combat.Shield.TimeRemaining,
+                Statuses = combat.Status.Capture(),
+                Stance = combat.Stance.Capture(),
+                Modifiers = abilities != null ? abilities.CaptureModifiers() : Array.Empty<AbilityModifierState>(),
+                Valid = true
+            };
+
+            snapshots.Push(snapshot);
+            return snapshot;
+        }
+
+        /// <summary>按快照回滚。PhysiologicalOnly 只回生命/Buff/护盾，Full 连坐标一起回。</summary>
+        public bool Rewind(float secondsAgo, StateRestoreMode mode, float maxHeal = 0f, bool noBackslide = false)
+        {
+            RewindPlan plan;
+            if (!RewindPlanner.TryBuild(snapshots, combatTime, secondsAgo, mode, currentHealth, maxHealth,
+                    maxHeal, noBackslide, out plan))
+            {
+                return false;
+            }
+
+            CharacterSnapshot snapshot = plan.Snapshot;
+            currentHealth = Mathf.Clamp(plan.HealthToApply, 1f, maxHealth);
+            deathRaised = false;
+            if (Participant != null)
+            {
+                Participant.IsAlive = true;
+            }
+
+            combat.Status.Restore(snapshot.Statuses);
+            combat.Stance.Restore(snapshot.Stance);
+            combat.Shield.Clear();
+            if (snapshot.Shield > 0f)
+            {
+                combat.Shield.Add(snapshot.Shield, Mathf.Max(0.05f, snapshot.ShieldRemaining));
+            }
+
+            if (abilities != null)
+            {
+                abilities.RestoreModifiers(snapshot.Modifiers);
+                abilities.SetHealth(currentHealth, maxHealth);
+            }
+
+            if (plan.RestorePosition)
+            {
+                transform.position = new Vector3(snapshot.X, snapshot.Y, transform.position.z);
+                CombatBody combatBody = Body;
+                if (combatBody != null)
+                {
+                    combatBody.Teleport(new Vec2(snapshot.X, snapshot.Y));
+                }
+            }
+
+            RaiseHealthChanged();
+            CombatEvents.RaiseStateRestored(new StateRestoredEvent(participantId, mode, secondsAgo, currentHealth));
+            return true;
         }
 
         /// <summary>自己造成一次伤害后调用（剑意叠层等）。</summary>
@@ -264,7 +696,7 @@ namespace Ring.Flow
 
         /// <summary>
         /// 钟声换牌之后把「手上持有的特质与技能卡」同步进五个能力槽。
-        /// 普攻槽不受影响，会在同步里保留下来。
+        /// 普攻槽不受影响，会在同步里保留下来；血量/位置/Buff 不重置。
         /// </summary>
         public void RefreshLoadout()
         {
@@ -294,6 +726,15 @@ namespace Ring.Flow
 
             if (abilities != null)
             {
+                // 热重载/特质可能改变最大生命：按原血量比例同步，避免出现当前血量大于上限。
+                float nextMax = Mathf.Max(1f, abilities.MaxHealth);
+                if (!Mathf.Approximately(nextMax, maxHealth))
+                {
+                    float ratio = maxHealth > 0f ? currentHealth / maxHealth : 1f;
+                    maxHealth = nextMax;
+                    currentHealth = Mathf.Clamp(ratio * maxHealth, 1f, maxHealth);
+                }
+
                 abilities.NotifyHealth(currentHealth);
             }
         }
@@ -341,6 +782,11 @@ namespace Ring.Flow
             }
 
             currentHealth = next;
+            if (abilities != null)
+            {
+                abilities.NotifyHealth(currentHealth);
+            }
+
             RaiseHealthChanged();
         }
 
@@ -351,8 +797,11 @@ namespace Ring.Flow
                 return;
             }
 
+            float before = currentHealth;
             currentHealth = Mathf.Min(maxHealth, currentHealth + amount);
+            abilities?.NotifyHealth(currentHealth);
             RaiseHealthChanged();
+            CombatEvents.RaiseHealed(new HealEvent(0, participantId, currentHealth - before));
         }
 
         /// <summary>直接判死（B11 回血、演示脚本、剧情处决都用这个）。</summary>
@@ -365,7 +814,7 @@ namespace Ring.Flow
 
             currentHealth = 0f;
             RaiseHealthChanged();
-            RaiseDied();
+            RaiseDied(0);
         }
 
         /// <summary>总表里没有指定人设时，把已经生成的角色提升为玩家（换色 + 改名）。</summary>
@@ -394,6 +843,14 @@ namespace Ring.Flow
                 Participant.IsInPlay = true;
             }
 
+            combat.Reset();
+            snapshots.Clear();
+            combatTime = 0f;
+            invulnerableUntil = 0f;
+            stunResistanceUntil = 0f;
+            controlImmuneUntil = 0f;
+            nextSnapshotTime = 0f;
+
             if (abilities != null)
             {
                 // 满血重新分配：冷却、增益、叠层、计数与生命快照一起清掉。
@@ -402,6 +859,7 @@ namespace Ring.Flow
 
             RefreshLoadout();
             RaiseHealthChanged();
+            CaptureSnapshot();
         }
 
         public void Despawn()
@@ -416,7 +874,7 @@ namespace Ring.Flow
             }
         }
 
-        private void RaiseDied()
+        private void RaiseDied(int killerId)
         {
             if (deathRaised)
             {
@@ -429,6 +887,7 @@ namespace Ring.Flow
                 Participant.IsAlive = false;
             }
 
+            CombatEvents.RaiseDied(new DeathEvent(participantId, killerId));
             if (Died != null)
             {
                 Died(this);
@@ -447,12 +906,22 @@ namespace Ring.Flow
 
         private void BuildVisual()
         {
-            Transform visual = transform.Find("Visual");
+            // 跳跃需要一个单独的父节点做纵向偏移：SwordsmanSpriteAnimation 会每帧覆写
+            // Visual.localPosition 做脚底对齐，直接改 Visual 会被它顶掉。
+            Transform jumpOffset = transform.Find("JumpOffset");
+            if (jumpOffset == null)
+            {
+                var offsetGo = new GameObject("JumpOffset");
+                offsetGo.transform.SetParent(transform, false);
+                jumpOffset = offsetGo.transform;
+            }
+
+            Transform visual = jumpOffset.Find("Visual");
             GameObject go;
             if (visual == null)
             {
                 go = new GameObject("Visual");
-                go.transform.SetParent(transform, false);
+                go.transform.SetParent(jumpOffset, false);
             }
             else
             {
@@ -487,6 +956,16 @@ namespace Ring.Flow
                     animation.RefreshVisual();
                 }
 
+                return;
+            }
+
+            if (persona == PersonaId.Strongman)
+            {
+                renderer.color = Color.white;
+                go.transform.localPosition = Vector3.zero;
+                go.transform.localScale = Vector3.one;
+                if (go.GetComponent<Ring.Characters.StrongmanSpriteAnimation>() == null)
+                    go.AddComponent<Ring.Characters.StrongmanSpriteAnimation>();
                 return;
             }
 
