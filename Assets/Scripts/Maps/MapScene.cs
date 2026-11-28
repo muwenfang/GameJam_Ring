@@ -51,6 +51,42 @@ namespace Ring.Maps
         [Tooltip("本图地面碰撞体（BoxCollider2D 等）。留空时自动从 Ground Root 上查找；没有地面时保持空。")]
         private Collider2D groundCollider;
 
+        [Header("屏幕几何（可选，决定 25×12 格与角色坐标是否统一）")]
+        [SerializeField]
+        [Tooltip("算场地用的相机；留空用 Camera.main。生成工具会自动拖入场景主相机。")]
+        private Camera stageCamera;
+
+        [SerializeField]
+        [Tooltip("本图背景 SpriteRenderer；留空时按子物体名 BG_背景 自动查找。")]
+        private SpriteRenderer background;
+
+        [SerializeField]
+        [Tooltip("可选：根节点上的 MapScreenFitter。有它就复用它的可调参数与计算结果；没有则用下面的设计网格就地算。")]
+        private MapScreenFitter screenFitter;
+
+        [SerializeField]
+        [Min(1f)]
+        [Tooltip("背景图总列数，默认 25（MapKit 口径）。")]
+        private float designColumns = MapStageBuilder.DesignColumns;
+
+        [SerializeField]
+        [Min(1f)]
+        [Tooltip("背景图总行数，默认 12。")]
+        private float designRows = MapStageBuilder.DesignRows;
+
+        [SerializeField]
+        [Min(0.01f)]
+        [Tooltip("碰撞地面占图片最底几行，默认 1（= 图里画的那层地面）。")]
+        private float groundRows = 1f;
+
+        [SerializeField]
+        [Tooltip("进入地图时自动把背景铺满视口、地面压到图片底部那层。关掉则完全用场景里保存的静态数值。")]
+        private bool autoFitOnEnter = true;
+
+        private const string BackgroundChildName = "BG_背景";
+
+        private MapStage stage;
+
         public BattleMapId MapId
         {
             get { return mapId; }
@@ -121,6 +157,111 @@ namespace Ring.Maps
         }
 
         /// <summary>
+        /// 本图的场地几何（背景世界矩形 + 25×12 格换算 + 地面顶面）。
+        /// 进过一次地图（<see cref="Enter"/>）或调用过 <see cref="Refit"/> 后有效。
+        /// </summary>
+        public MapStage Stage
+        {
+            get { return stage; }
+        }
+
+        /// <summary>本图是否已经算出场地几何。</summary>
+        public bool HasStage
+        {
+            get { return stage.IsValid; }
+        }
+
+        /// <summary>取场地几何；没算过时返回 false（不会临时创建物体）。</summary>
+        public bool TryGetStage(out MapStage value)
+        {
+            value = stage;
+            return stage.IsValid;
+        }
+
+        /// <summary>
+        /// 重新计算「背景铺满视口 + 地面压到图片底部那层 + 25×12 格换算」。
+        /// 有 <see cref="MapScreenFitter"/> 时复用它的参数与结果，否则就地按本组件的设计网格计算；
+        /// 两者都没有背景 sprite 时退回「整个视口当 25×12」的兜底口径。
+        /// </summary>
+        public bool Refit()
+        {
+            Camera cam = stageCamera != null ? stageCamera : Camera.main;
+
+            if (screenFitter == null)
+            {
+                screenFitter = GetComponent<MapScreenFitter>();
+            }
+
+            if (screenFitter != null)
+            {
+                screenFitter.Fit();
+                if (screenFitter.HasStage)
+                {
+                    stage = screenFitter.Stage;
+                    return true;
+                }
+            }
+
+            SpriteRenderer bg = ResolveBackground();
+            Transform ground = groundRoot != null ? groundRoot : FindChild(transform, "Ground_地面25格");
+            BoxCollider2D box = ground != null ? ground.GetComponent<BoxCollider2D>() : null;
+
+            MapStage computed;
+            if (bg != null && ground != null && box != null && cam != null
+                && MapStageBuilder.TryApply(
+                    cam, transform, bg, ground, box,
+                    designColumns, designRows, groundRows, MapStageBuilder.FallbackSpriteSize, out computed))
+            {
+                stage = computed;
+                return true;
+            }
+
+            if (MapStageBuilder.TryFallback(cam, designColumns, designRows, groundRows, out computed))
+            {
+                stage = computed;
+                return true;
+            }
+
+            stage = default(MapStage);
+            return false;
+        }
+
+        private SpriteRenderer ResolveBackground()
+        {
+            if (background != null)
+            {
+                return background;
+            }
+
+            Transform child = FindChild(transform, BackgroundChildName);
+            if (child != null)
+            {
+                background = child.GetComponent<SpriteRenderer>();
+            }
+
+            return background;
+        }
+
+        private static Transform FindChild(Transform parent, string childName)
+        {
+            if (parent == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < parent.childCount; i++)
+            {
+                Transform child = parent.GetChild(i);
+                if (child.name == childName)
+                {
+                    return child;
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// 地面顶面的世界 Y（角色脚底应该落在这里）。没有碰撞地面时返回 0，
         /// 调用方先用 <see cref="HasGround"/> 判空。
         ///
@@ -132,6 +273,11 @@ namespace Ring.Maps
         {
             get
             {
+                if (stage.IsValid)
+                {
+                    return stage.GroundSurfaceY;
+                }
+
                 Collider2D col = GroundCollider;
                 if (col == null)
                 {
@@ -191,6 +337,13 @@ namespace Ring.Maps
             {
                 col.enabled = true;
             }
+
+            // 背景铺满视口 + 地面压到图片底部那层 + 25×12 格换算，一次算完。
+            // 这样不需要先点 Editor 菜单也能对齐；想完全用静态数值就把 Auto Fit On Enter 关掉。
+            if (autoFitOnEnter)
+            {
+                Refit();
+            }
         }
 
         /// <summary>退出这张地图。默认只是把整组物体收起；子类可重写做回收/卸载。</summary>
@@ -225,6 +378,35 @@ namespace Ring.Maps
             if (groundCollider == null && groundRoot != null)
             {
                 groundCollider = groundRoot.GetComponent<Collider2D>();
+            }
+
+            if (background == null)
+            {
+                Transform child = FindChild(transform, BackgroundChildName);
+                if (child != null)
+                {
+                    background = child.GetComponent<SpriteRenderer>();
+                }
+            }
+
+            if (screenFitter == null)
+            {
+                screenFitter = GetComponent<MapScreenFitter>();
+            }
+
+            if (designColumns < 1f)
+            {
+                designColumns = MapStageBuilder.DesignColumns;
+            }
+
+            if (designRows < 1f)
+            {
+                designRows = MapStageBuilder.DesignRows;
+            }
+
+            if (groundRows < 0.01f)
+            {
+                groundRows = 1f;
             }
         }
     }

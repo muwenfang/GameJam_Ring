@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Ring.Bells;
 using Ring.Characters;
+using Ring.Inputs;
 using Ring.Maps;
 using UnityEngine;
 
@@ -53,12 +54,48 @@ namespace Ring.Flow
         [Tooltip("是否给玩家角色挂上 PlayerMotor（用 GameInput 的移动轴）与 AbilityCaster。")]
         private bool attachPlayerMotor = true;
 
+        [Header("场地落位（单图切镜，25×12 坐标统一）")]
+        [SerializeField]
+        [Tooltip("战斗地图展示器；留空自动在场景里找。有它才能读到当前地图的场地矩形与 25×12 格换算。")]
+        private BattleMapPresenter mapPresenter;
+
+        [SerializeField]
+        [Tooltip("开：只把「玩家所在那一场」摆到当前展示的地图里（切镜），其余场次停到场外。关：沿用旧的 2 行 3 列分擂台落位。")]
+        private bool stageIntoCurrentMap = true;
+
+        [SerializeField]
+        [Tooltip("1v1 双方相距多少格（按 25×12 地图格算）。默认 6 格。")]
+        private float duelSeparationCells = 6f;
+
+        [SerializeField]
+        [Tooltip("脚底离地面上沿的余量（世界单位），避免视觉上陷进地面。")]
+        private float groundClearance = 0.02f;
+
+        [SerializeField]
+        [Tooltip("场外待机点相对地图右边界的间距（世界单位）。")]
+        private float parkSpacing = 30f;
+
+        [SerializeField]
+        [Tooltip("把「一格 = 多少世界单位」同步给角色运动体 / 技能施放器 / 输入选点。关掉则保持各自 Inspector 里的值。")]
+        private bool syncCellScale = true;
+
+        [SerializeField]
+        [Tooltip("是否把落位结果打印到 Console。")]
+        private bool logStage = true;
+
         [SerializeField]
         [Tooltip("是否把生成结果打印到 Console。")]
         private bool logSpawn = true;
 
         private readonly List<CharacterInstance> instances = new List<CharacterInstance>(PersonaIds.Count);
         private ArenaPlan currentPlan;
+        private bool subscribedToPresenter;
+
+        private void Awake()
+        {
+            // 尽早订阅：GameFlow 在 Start 里就会开局，地图在 Loading→Collect 时展示。
+            ResolvePresenter();
+        }
 
         /// <summary>本局生成的角色（顺序 = 生成顺序）。</summary>
         public IReadOnlyList<CharacterInstance> Instances
@@ -178,9 +215,16 @@ namespace Ring.Flow
         }
 
         /// <summary>
-        /// 把一轮 <see cref="ArenaPlan"/> 落到世界坐标：每个角色站到本场区域中心的左右两侧。
-        /// 复制体对决（B12，SecondId &lt; 0）暂时只摆本体，复制体由后续战斗层生成。
-        /// 同时把玩家所在的擂台中心交给 <see cref="PlayerMotor"/>，避免它被圆形边界拉回原点。
+        /// 把一轮 <see cref="ArenaPlan"/> 落到世界坐标。
+        ///
+        /// 两种口径（Inspector 的 <c>stageIntoCurrentMap</c> 切换）：
+        /// - **单图切镜（默认）**：只把玩家所在那一场摆到「当前展示的地图」里，
+        ///   双方站在 25×12 格的第 25 格中轴左右各 3 格、脚底落在地面上沿；
+        ///   另外两场停到地图右边界之外（相机锁在场地内，永远看不到）。
+        /// - **旧分擂台**：沿用 2 行 3 列 / 六个区域锚点，每场各自一块场地（需要宽相机或多相机）。
+        ///
+        /// 地图还没展示时（<see cref="BattleMapPresenter.MapShown"/> 尚未触发）先保持生成时的六边形站位，
+        /// 等地图激活、场地几何算完后再自动重摆——所以最终状态一定是「和当前地图对齐」的。
         /// </summary>
         public void ApplyPlan(ArenaPlan plan)
         {
@@ -190,38 +234,265 @@ namespace Ring.Flow
                 return;
             }
 
+            StagePlan(plan);
+        }
+
+        /// <summary>重摆当前这一轮（地图切换完成、视口变化后调用）。</summary>
+        public void RestageCurrentPlan()
+        {
+            if (currentPlan != null)
+            {
+                StagePlan(currentPlan);
+            }
+        }
+
+        private void StagePlan(ArenaPlan plan)
+        {
+            MapStage stage;
+            bool hasStage = TryGetStage(out stage);
+
+            int playerId = Player != null ? Player.Id : -1;
+            int stagedIndex = -1;
+            if (hasStage)
+            {
+                stagedIndex = playerId >= 0 ? plan.DuelIndexOf(playerId) : 0;
+                if (stagedIndex < 0 && plan.Duels.Count > 0)
+                {
+                    stagedIndex = 0;
+                }
+            }
+            else if (stageIntoCurrentMap && ResolvePresenter() != null)
+            {
+                // 展示器在、但地图还没激活（MapShown 未触发）：先保持生成时的六边形站位，
+                // 等 MapShown 回来再摆。比按旧口径摆到 ±14 的镜头外更安全。
+                if (logStage)
+                {
+                    Debug.Log("[落位] 等待当前地图场地就绪，先保持初始站位；地图展示后会自动重摆。", this);
+                }
+
+                return;
+            }
+
             for (int d = 0; d < plan.Duels.Count; d++)
             {
                 ArenaDuel duel = plan.Duels[d];
-                Vector3 center = GetRegionCenter(duel.Map);
-
-                if (duel.SecondId >= 0)
+                if (duel == null)
                 {
-                    PlaceAt(duel.FirstId, center + Vector3.left * duelOffset);
-                    PlaceAt(duel.SecondId, center + Vector3.right * duelOffset);
+                    continue;
+                }
+
+                if (!hasStage)
+                {
+                    PlaceDuelLegacy(duel);
+                }
+                else if (d == stagedIndex)
+                {
+                    StageDuel(duel, stage, playerId);
                 }
                 else
                 {
-                    // 落单者（复制体对决 / 轮空）：站在区域中心。
-                    PlaceAt(duel.FirstId, center);
-                }
-
-                SetBodyArena(duel.FirstId, center);
-                if (duel.SecondId >= 0)
-                {
-                    SetBodyArena(duel.SecondId, center);
+                    ParkDuel(duel, stage, d);
                 }
             }
 
-            if (Player != null && plan.Contains(Player.Id))
+            if (hasStage && syncCellScale)
             {
-                Vector3 playerCenter = GetRegionCenter(plan.MapOf(Player.Id));
+                ApplyCellScale(stage);
+            }
+
+            if (hasStage && Player != null && plan.Contains(Player.Id))
+            {
                 PlayerMotor motor = Player.GetComponent<PlayerMotor>();
                 if (motor != null)
                 {
-                    motor.SetArenaCenter(playerCenter);
+                    motor.SetArenaCenter(new Vector2(stage.Center.x, stage.PlayableCenterY));
                 }
             }
+
+            if (logStage)
+            {
+                Debug.Log("[落位] " + (hasStage
+                        ? "切镜：" + (stagedIndex >= 0 && stagedIndex < plan.Duels.Count
+                            ? plan.Duels[stagedIndex].Map.ToDisplayName()
+                            : "无") + " 摆玩家场次，其余停到场外；" + stage.Describe()
+                        : "已关闭切镜落位（或没有 BattleMapPresenter），按旧分擂台落位")
+                    + (hasStage && syncCellScale ? "；格距 " + stage.CellSize.ToString("F3") + " 已同步" : string.Empty), this);
+            }
+        }
+
+        /// <summary>把玩家这一场的双方摆进当前地图：中轴左右各半距、脚底贴地面。</summary>
+        private void StageDuel(ArenaDuel duel, MapStage stage, int playerId)
+        {
+            float centerCol = stage.Grid.SafeColumns * 0.5f;
+            float halfCells = Mathf.Max(0.5f, duelSeparationCells) * 0.5f;
+
+            Vector3 left = stage.GroundPoint(centerCol - halfCells);
+            Vector3 right = stage.GroundPoint(centerCol + halfCells);
+            left.y += groundClearance;
+            right.y += groundClearance;
+
+            // 玩家固定站左侧（若玩家是 SecondId 则站右侧），镜头里始终左守右攻。
+            bool playerOnLeft = playerId < 0 || duel.FirstId == playerId;
+
+            if (duel.SecondId >= 0)
+            {
+                PlaceAt(duel.FirstId, playerOnLeft ? left : right);
+                PlaceAt(duel.SecondId, playerOnLeft ? right : left);
+                ConfigureBody(duel.FirstId, stage);
+                ConfigureBody(duel.SecondId, stage);
+            }
+            else
+            {
+                // 落单（复制体对决 / 轮空）：站中轴。
+                PlaceAt(duel.FirstId, stage.GroundPoint(centerCol) + Vector3.up * groundClearance);
+                ConfigureBody(duel.FirstId, stage);
+            }
+        }
+
+        /// <summary>其余场次停到地图右边界之外：逻辑仍在跑，但相机锁在场地内看不到。</summary>
+        private void ParkDuel(ArenaDuel duel, MapStage stage, int index)
+        {
+            float x = stage.WorldRect.xMax + parkSpacing * (index + 1);
+            float y = stage.WorldRect.yMin + stage.WorldRect.height * 0.5f;
+            var park = new Vector3(x, y, 0f);
+
+            PlaceAt(duel.FirstId, park);
+            if (duel.SecondId >= 0)
+            {
+                PlaceAt(duel.SecondId, park + Vector3.right * 0.6f);
+            }
+
+            // 半径压到 0.5，位置钟声 / 击退也不会把场外角色带回镜头。
+            ConfigureBodyAt(duel.FirstId, park, 0.5f, stage.CellSize);
+            if (duel.SecondId >= 0)
+            {
+                ConfigureBodyAt(duel.SecondId, park + Vector3.right * 0.6f, 0.5f, stage.CellSize);
+            }
+        }
+
+        private void PlaceDuelLegacy(ArenaDuel duel)
+        {
+            Vector3 center = GetRegionCenter(duel.Map);
+
+            if (duel.SecondId >= 0)
+            {
+                PlaceAt(duel.FirstId, center + Vector3.left * duelOffset);
+                PlaceAt(duel.SecondId, center + Vector3.right * duelOffset);
+            }
+            else
+            {
+                PlaceAt(duel.FirstId, center);
+            }
+
+            SetBodyArena(duel.FirstId, center);
+            if (duel.SecondId >= 0)
+            {
+                SetBodyArena(duel.SecondId, center);
+            }
+        }
+
+        private void ConfigureBody(int participantId, MapStage stage)
+        {
+            CharacterInstance character = FindById(participantId);
+            if (character == null || character.Body == null)
+            {
+                return;
+            }
+
+            // 圆的最低点 = 地面上沿、最高点 = 背景顶边：角色既不会陷进地面，也不会走出画面。
+            character.Body.ConfigureArena(
+                new Vector2(stage.Center.x, stage.PlayableCenterY), true, stage.PlayableRadius, stage.CellSize);
+
+            if (syncCellScale)
+            {
+                AbilityCaster caster = character.GetComponent<AbilityCaster>();
+                if (caster != null)
+                {
+                    caster.SetUnitsPerCell(stage.CellSize);
+                }
+            }
+        }
+
+        private void ConfigureBodyAt(int participantId, Vector3 center, float radius, float cellSize)
+        {
+            CharacterInstance character = FindById(participantId);
+            if (character == null || character.Body == null)
+            {
+                return;
+            }
+
+            character.Body.ConfigureArena(new Vector2(center.x, center.y), true, radius, cellSize);
+        }
+
+        /// <summary>把格距同步给输入选点与所有角色（运动体 / 技能 / 玩家适配层）。</summary>
+        private void ApplyCellScale(MapStage stage)
+        {
+            GameInput input = GameInput.Instance;
+            if (input != null)
+            {
+                // 选点格与地图格必须同源：否则鼠标点第 12 格、技能却算到第 10 格。
+                input.SetGrid(stage.Grid);
+            }
+
+            for (int i = 0; i < instances.Count; i++)
+            {
+                CharacterInstance character = instances[i];
+                if (character == null)
+                {
+                    continue;
+                }
+
+                if (character.Body != null)
+                {
+                    character.Body.SetUnitsPerCell(stage.CellSize);
+                }
+
+                PlayerMotor motor = character.GetComponent<PlayerMotor>();
+                if (motor != null)
+                {
+                    motor.SetUnitsPerCell(stage.CellSize);
+                }
+
+                AbilityCaster caster = character.GetComponent<AbilityCaster>();
+                if (caster != null)
+                {
+                    caster.SetUnitsPerCell(stage.CellSize);
+                }
+            }
+        }
+
+        private bool TryGetStage(out MapStage stage)
+        {
+            BattleMapPresenter presenter = ResolvePresenter();
+            if (stageIntoCurrentMap && presenter != null && presenter.TryGetStage(out stage))
+            {
+                return true;
+            }
+
+            stage = default(MapStage);
+            return false;
+        }
+
+        private BattleMapPresenter ResolvePresenter()
+        {
+            if (mapPresenter == null)
+            {
+                mapPresenter = FindObjectOfType<BattleMapPresenter>();
+            }
+
+            if (mapPresenter != null && !subscribedToPresenter)
+            {
+                mapPresenter.MapShown += HandleMapShown;
+                subscribedToPresenter = true;
+            }
+
+            return mapPresenter;
+        }
+
+        private void HandleMapShown(BattleMapId map)
+        {
+            // 地图刚激活、场地几何算完：把这一轮重新摆一次，保证角色站在当前这张图的地面上。
+            RestageCurrentPlan();
         }
 
         /// <summary>销毁本局所有角色（回主菜单、重开时调用）。</summary>
@@ -340,6 +611,12 @@ namespace Ring.Flow
 
         private void OnDestroy()
         {
+            if (mapPresenter != null && subscribedToPresenter)
+            {
+                mapPresenter.MapShown -= HandleMapShown;
+            }
+
+            subscribedToPresenter = false;
             instances.Clear();
             Player = null;
             currentPlan = null;

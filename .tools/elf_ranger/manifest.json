@@ -1,0 +1,507 @@
+{
+ "ElfRanger_Arrow_00": {
+  "group": "Arrow",
+  "guid": "d7d20b273efa29df3ddb37567e72f2ee",
+  "ppu": 500
+ },
+ "ElfRanger_Arrow_01": {
+  "group": "Arrow",
+  "guid": "ac38d2c4d005b51d2de5dcd2419329bf",
+  "ppu": 500
+ },
+ "ElfRanger_Arrow_02": {
+  "group": "Arrow",
+  "guid": "021a60a0f3ea908eee3637a90f0c8736",
+  "ppu": 500
+ },
+ "ElfRanger_Arrow_03": {
+  "group": "Arrow",
+  "guid": "3af71badb519681b69d8dcb34fb8405c",
+  "ppu": 500
+ },
+ "ElfRanger_Arrow_04": {
+  "group": "Arrow",
+  "guid": "d18d8eb3782314a64c83e0464897135d",
+  "ppu": 500
+ },
+ "ElfRanger_Arrow_05": {
+  "group": "Arrow",
+  "guid": "be40240037912df50eb6ae316ee54fa4",
+  "ppu": 500
+ },
+ "ElfRanger_Arrow_06": {
+  "group": "Arrow",
+  "guid": "015b6a057e3dc3caa18e506c0a850cb3",
+  "ppu": 500
+ },
+ "ElfRanger_Arrow_07": {
+  "group": "Arrow",
+  "guid": "f2fcbed502d7b38f9548a7cff1c3f373",
+  "ppu": 500
+ },
+ "ElfRanger_Arrow_08": {
+  "group": "Arrow",
+  "guid": "0ef61f8493b2883513cfbd99ad6c26b1",
+  "ppu": 500
+ },
+ "ElfRanger_Arrow_09": {
+  "group": "Arrow",
+  "guid": "3c806d649e7f1d45fd6c2cb9e80f0689",
+  "ppu": 500
+ },
+ "ElfRanger_Arrow_10": {
+  "group": "Arrow",
+  "guid": "aab78edb012804409793c07bac918d99",
+  "ppu": 500
+ },
+ "ElfRanger_Arrow_11": {
+  "group": "Arrow",
+  "guid": "210f0c576210b44e1b1da67e17c3d60d",
+  "ppu": 500
+ },
+ "ElfRanger_Attack_00": {
+  "group": "Attack",
+  "guid": "0e8da1ce4ca2096d1a1cac3609ab7570",
+  "ppu": 292
+ },
+ "ElfRanger_Attack_01": {
+  "group": "Attack",
+  "guid": "cbd1ebce43b62b3aa9b06d455dc28a36",
+  "ppu": 292
+ },
+ "ElfRanger_Attack_02": {
+  "group": "Attack",
+  "guid": "3a682fd3439c36b46e46c65c5e42e15e",
+  "ppu": 292
+ },
+ "ElfRanger_Attack_03": {
+  "group": "Attack",
+  "guid": "8f2decc7076a7a2b1b7b938c9998d2f1",
+  "ppu": 292
+ },
+ "ElfRanger_Attack_04": {
+  "group": "Attack",
+  "guid": "e98cd63a2d599c4aea7f9830d1128d85",
+  "ppu": 292
+ },
+ "ElfRanger_Attack_05": {
+  "group": "Attack",
+  "guid": "cb0ecb165b9db30b1f56674efc2f6e49",
+  "ppu": 292
+ },
+ "ElfRanger_Attack_06": {
+  "group": "Attack",
+  "guid": "229e752a8bc9d8dc58b171b637d1e442",
+  "ppu": 292
+ },
+ "ElfRanger_Attack_07": {
+  "group": "Attack",
+  "guid": "b8ad579258b48d239452290c00696cda",
+  "ppu": 292
+ },
+ "ElfRanger_Attack_08": {
+  "group": "Attack",
+  "guid": "48b318f8034444c3910eacdcbff1b6f2",
+  "ppu": 292
+ },
+ "ElfRanger_Attack_09": {
+  "group": "Attack",
+  "guid": "5441142a4aac14def1da62cb82907410",
+  "ppu": 292
+ },
+ "ElfRanger_BrambleFade_00": {
+  "group": "BrambleFade",
+  "guid": "d6068fc46b7acb0f55113a4cfab3d8ca",
+  "ppu": 292
+ },
+ "ElfRanger_BrambleFade_01": {
+  "group": "BrambleFade",
+  "guid": "c95d3d7f1fde18f9654048e0b49de22a",
+  "ppu": 292
+ },
+ "ElfRanger_BrambleFade_02": {
+  "group": "BrambleFade",
+  "guid": "9d133d9a5d4e6b1d52c1d0ce537600c5",
+  "ppu": 292
+ },
+ "ElfRanger_BrambleGrow_00": {
+  "group": "BrambleGrow",
+  "guid": "7808d6fdc0981c73b83fed9b6cc13f24",
+  "ppu": 292
+ },
+ "ElfRanger_BrambleGrow_01": {
+  "group": "BrambleGrow",
+  "guid": "f43bea762c0f3c4aca64bf92c7fcf5ff",
+  "ppu": 292
+ },
+ "ElfRanger_BrambleGrow_02": {
+  "group": "BrambleGrow",
+  "guid": "6bd3ccb4428f316513ba72b1677f50a1",
+  "ppu": 292
+ },
+ "ElfRanger_BrambleGrow_03": {
+  "group": "BrambleGrow",
+  "guid": "e185573485eca73e88f565c363b61fde",
+  "ppu": 292
+ },
+ "ElfRanger_BrambleGrow_04": {
+  "group": "BrambleGrow",
+  "guid": "715b88256493ce92ad14ea168ced5fa9",
+  "ppu": 292
+ },
+ "ElfRanger_BrambleGrow_05": {
+  "group": "BrambleGrow",
+  "guid": "743905c2a4c9fa9ab8db0f69035cc1fc",
+  "ppu": 292
+ },
+ "ElfRanger_BrambleGrow_06": {
+  "group": "BrambleGrow",
+  "guid": "59e05c7e7dbea37e5e7eb3b1f92c0b85",
+  "ppu": 292
+ },
+ "ElfRanger_BrambleGrow_07": {
+  "group": "BrambleGrow",
+  "guid": "a4c225ebc9945356f2ed3e5bb415872c",
+  "ppu": 292
+ },
+ "ElfRanger_BrambleIdle_00": {
+  "group": "BrambleIdle",
+  "guid": "4cc2e720268e475ffd6876ef73af6fc5",
+  "ppu": 292
+ },
+ "ElfRanger_BrambleIdle_01": {
+  "group": "BrambleIdle",
+  "guid": "7142a8515fb9319f7420c8b8728ef520",
+  "ppu": 292
+ },
+ "ElfRanger_BrambleIdle_02": {
+  "group": "BrambleIdle",
+  "guid": "bc9e1095fa84a5a76e0ec04a6458c88f",
+  "ppu": 292
+ },
+ "ElfRanger_BrambleIdle_03": {
+  "group": "BrambleIdle",
+  "guid": "239ed0517ea4c97753735a7698bf978a",
+  "ppu": 292
+ },
+ "ElfRanger_BrambleIdle_04": {
+  "group": "BrambleIdle",
+  "guid": "b01d7d4ea35c07193bdbd4619ba454d7",
+  "ppu": 292
+ },
+ "ElfRanger_BrambleIdle_05": {
+  "group": "BrambleIdle",
+  "guid": "6b8afadb0d32ee4c9e67ba48c330b5e9",
+  "ppu": 292
+ },
+ "ElfRanger_DodgeBack_00": {
+  "group": "DodgeBack",
+  "guid": "170b7dad8e9a8a50e1217ba34dda45b1",
+  "ppu": 292
+ },
+ "ElfRanger_DodgeBack_01": {
+  "group": "DodgeBack",
+  "guid": "ecae89c818c346eef420c950f5c1747f",
+  "ppu": 292
+ },
+ "ElfRanger_DodgeBack_02": {
+  "group": "DodgeBack",
+  "guid": "ad460184c700a5ebaef3d820f5ffdf4b",
+  "ppu": 292
+ },
+ "ElfRanger_DodgeBack_03": {
+  "group": "DodgeBack",
+  "guid": "081352dbde2f2124f8ac1aceebe76aeb",
+  "ppu": 292
+ },
+ "ElfRanger_DodgeBack_04": {
+  "group": "DodgeBack",
+  "guid": "2a661916b924777c8a0102e4c64b44fd",
+  "ppu": 292
+ },
+ "ElfRanger_DodgeBack_05": {
+  "group": "DodgeBack",
+  "guid": "85f4543e04fe5a37a1bd9050899574ca",
+  "ppu": 292
+ },
+ "ElfRanger_DodgeFwd_00": {
+  "group": "DodgeFwd",
+  "guid": "0702d683abb5043358cb0475b43845da",
+  "ppu": 292
+ },
+ "ElfRanger_DodgeFwd_01": {
+  "group": "DodgeFwd",
+  "guid": "db96c3f2eff5f510593d5c9dac38291d",
+  "ppu": 292
+ },
+ "ElfRanger_DodgeFwd_02": {
+  "group": "DodgeFwd",
+  "guid": "51ca51ba668dfceb9ec3b6c49ac1907a",
+  "ppu": 292
+ },
+ "ElfRanger_DodgeFwd_03": {
+  "group": "DodgeFwd",
+  "guid": "a9745d7cc2985ada2d59f1745619f578",
+  "ppu": 292
+ },
+ "ElfRanger_DodgeFwd_04": {
+  "group": "DodgeFwd",
+  "guid": "de3ba361c5bfb87f7c64139619467567",
+  "ppu": 292
+ },
+ "ElfRanger_DodgeFwd_05": {
+  "group": "DodgeFwd",
+  "guid": "0c89d7eba4d41cb5b3eb896c3fdd1c97",
+  "ppu": 292
+ },
+ "ElfRanger_Halo_00": {
+  "group": "Halo",
+  "guid": "cc2867fadbb8506daac398363bce9ef4",
+  "ppu": 292
+ },
+ "ElfRanger_Halo_01": {
+  "group": "Halo",
+  "guid": "3192ca24f7cd85ef5264a12879e9ce89",
+  "ppu": 292
+ },
+ "ElfRanger_Halo_02": {
+  "group": "Halo",
+  "guid": "453a3555aba5e7c90b6ab8b76da40fdb",
+  "ppu": 292
+ },
+ "ElfRanger_Halo_03": {
+  "group": "Halo",
+  "guid": "38c081f581761cf1f0551ddd3d9f7c71",
+  "ppu": 292
+ },
+ "ElfRanger_Halo_04": {
+  "group": "Halo",
+  "guid": "cf530366a01ce39c6f170cb5128ed0f1",
+  "ppu": 292
+ },
+ "ElfRanger_Halo_05": {
+  "group": "Halo",
+  "guid": "4241e39cfc0dc90c5cf03c547de3ba56",
+  "ppu": 292
+ },
+ "ElfRanger_Halo_06": {
+  "group": "Halo",
+  "guid": "62f2355b4506fe9a7408fb6f409e3b7a",
+  "ppu": 292
+ },
+ "ElfRanger_Halo_07": {
+  "group": "Halo",
+  "guid": "c06bdd18842b32d048114b68dcc7375b",
+  "ppu": 292
+ },
+ "ElfRanger_Heal_00": {
+  "group": "Heal",
+  "guid": "4283defe7327b9293dc9f59009f901b3",
+  "ppu": 292
+ },
+ "ElfRanger_Heal_01": {
+  "group": "Heal",
+  "guid": "b03f9b2c51b073867a2eaf993921ae5d",
+  "ppu": 292
+ },
+ "ElfRanger_Heal_02": {
+  "group": "Heal",
+  "guid": "5b458e783e4daf2c329e0d0965ac56b9",
+  "ppu": 292
+ },
+ "ElfRanger_Heal_03": {
+  "group": "Heal",
+  "guid": "7a8485ad6f29629206e819f7b4ba4383",
+  "ppu": 292
+ },
+ "ElfRanger_Heal_04": {
+  "group": "Heal",
+  "guid": "7b195b791ff5fcd3a4a8e02cdbad1393",
+  "ppu": 292
+ },
+ "ElfRanger_Heal_05": {
+  "group": "Heal",
+  "guid": "ee912228b40613563b22cec5b68ace23",
+  "ppu": 292
+ },
+ "ElfRanger_Heal_06": {
+  "group": "Heal",
+  "guid": "9a50db709a1c921a389964b1e3dfca9d",
+  "ppu": 292
+ },
+ "ElfRanger_Heal_07": {
+  "group": "Heal",
+  "guid": "8726cf72d457f4560e6cd41e1836fe37",
+  "ppu": 292
+ },
+ "ElfRanger_Heal_08": {
+  "group": "Heal",
+  "guid": "6e9682953982bdb8bd48b747715b91b9",
+  "ppu": 292
+ },
+ "ElfRanger_Heal_09": {
+  "group": "Heal",
+  "guid": "f11eb8778b443ef8a1e31e48cf6aa42d",
+  "ppu": 292
+ },
+ "ElfRanger_Heal_10": {
+  "group": "Heal",
+  "guid": "595dbcf8c49d7e0c65a7b6751e983be6",
+  "ppu": 292
+ },
+ "ElfRanger_Heal_11": {
+  "group": "Heal",
+  "guid": "3a5a9430f0f924e6cf2034d523dd63e3",
+  "ppu": 292
+ },
+ "ElfRanger_Heavy_00": {
+  "group": "Heavy",
+  "guid": "11fefc0eb0f6046a0957259fae3157e5",
+  "ppu": 292
+ },
+ "ElfRanger_Heavy_01": {
+  "group": "Heavy",
+  "guid": "fc96d9929f7b96d4da1690bee5e858a2",
+  "ppu": 292
+ },
+ "ElfRanger_Heavy_02": {
+  "group": "Heavy",
+  "guid": "b35544e1d76f87d15b26d5047e9efa19",
+  "ppu": 292
+ },
+ "ElfRanger_Heavy_03": {
+  "group": "Heavy",
+  "guid": "dc397fdb2437c8d732ac442d72ffc599",
+  "ppu": 292
+ },
+ "ElfRanger_Heavy_04": {
+  "group": "Heavy",
+  "guid": "2dfcb686804fcc6e1a71232799782d07",
+  "ppu": 292
+ },
+ "ElfRanger_Heavy_05": {
+  "group": "Heavy",
+  "guid": "21e7bc82af680f662e2b92c9091d154f",
+  "ppu": 292
+ },
+ "ElfRanger_Heavy_06": {
+  "group": "Heavy",
+  "guid": "e7765bdd90ae57a7fb4c4a79ba9c56d5",
+  "ppu": 292
+ },
+ "ElfRanger_Heavy_07": {
+  "group": "Heavy",
+  "guid": "8fc3598c83f7c38a45da3ea2a348aa66",
+  "ppu": 292
+ },
+ "ElfRanger_Heavy_08": {
+  "group": "Heavy",
+  "guid": "d0e8183b5f03329809d5fbc6d4f326d5",
+  "ppu": 292
+ },
+ "ElfRanger_Heavy_09": {
+  "group": "Heavy",
+  "guid": "48062a80d500d1bd03bddc0da787bd18",
+  "ppu": 292
+ },
+ "ElfRanger_Heavy_10": {
+  "group": "Heavy",
+  "guid": "11e57d6a6a2024a575c61f6924b489cd",
+  "ppu": 292
+ },
+ "ElfRanger_Heavy_11": {
+  "group": "Heavy",
+  "guid": "ab6351290f9781fcb9dae5e32524d6ec",
+  "ppu": 292
+ },
+ "ElfRanger_Idle_00": {
+  "group": "Idle",
+  "guid": "2f763544dbb694c6c69f98b6ab44e1c1",
+  "ppu": 292
+ },
+ "ElfRanger_Idle_01": {
+  "group": "Idle",
+  "guid": "2732c7739666c3b3acbd0772fae2e087",
+  "ppu": 292
+ },
+ "ElfRanger_Idle_02": {
+  "group": "Idle",
+  "guid": "7dc09aece86f2cd5f1be79de81814ce9",
+  "ppu": 292
+ },
+ "ElfRanger_Idle_03": {
+  "group": "Idle",
+  "guid": "ab386d6c1e53e63021ae824650570a10",
+  "ppu": 292
+ },
+ "ElfRanger_Idle_04": {
+  "group": "Idle",
+  "guid": "eea6c26743322dc1d8923e9e304663ab",
+  "ppu": 292
+ },
+ "ElfRanger_Idle_05": {
+  "group": "Idle",
+  "guid": "b593b82f2d0110794272efb459d2d104",
+  "ppu": 292
+ },
+ "ElfRanger_Jump_00": {
+  "group": "Jump",
+  "guid": "1786de7b7df4169367362b93acb45e0c",
+  "ppu": 292
+ },
+ "ElfRanger_Jump_01": {
+  "group": "Jump",
+  "guid": "eaa5c6b3150fb362d97fad7d107cf57a",
+  "ppu": 292
+ },
+ "ElfRanger_Jump_02": {
+  "group": "Jump",
+  "guid": "1602b58b61c60805070cfb1c8b02cfb0",
+  "ppu": 292
+ },
+ "ElfRanger_Jump_03": {
+  "group": "Jump",
+  "guid": "59327b4852e4fe11dcb5c8ff2d64f4e5",
+  "ppu": 292
+ },
+ "ElfRanger_Jump_04": {
+  "group": "Jump",
+  "guid": "af8aa5e27417383fa61e9281d86515b9",
+  "ppu": 292
+ },
+ "ElfRanger_Jump_05": {
+  "group": "Jump",
+  "guid": "988598b10d799754114a72f32783b72f",
+  "ppu": 292
+ },
+ "ElfRanger_Run_00": {
+  "group": "Run",
+  "guid": "16841a0df79b6e4843f2c3f8a1227ddf",
+  "ppu": 292
+ },
+ "ElfRanger_Run_01": {
+  "group": "Run",
+  "guid": "69271dc3ca9914a976e9ed8402f1f7dc",
+  "ppu": 292
+ },
+ "ElfRanger_Run_02": {
+  "group": "Run",
+  "guid": "88314a0b35192d57b27485c936abe1ed",
+  "ppu": 292
+ },
+ "ElfRanger_Run_03": {
+  "group": "Run",
+  "guid": "fe334f06fcbfcd5d009dc828f864c6be",
+  "ppu": 292
+ },
+ "ElfRanger_Run_04": {
+  "group": "Run",
+  "guid": "3acdb7ec576ef726c466cb98202ada56",
+  "ppu": 292
+ },
+ "ElfRanger_Run_05": {
+  "group": "Run",
+  "guid": "383540dc41b1e5655afe99e485ea15f0",
+  "ppu": 292
+ }
+}

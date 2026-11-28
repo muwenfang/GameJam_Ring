@@ -221,6 +221,22 @@ namespace Ring.Flow
             arenaCenter = new Vector2(center.x, center.y);
         }
 
+        /// <summary>
+        /// 只改「一格 = 多少世界单位」。地图按 25×12 铺满视口时一格约 0.83 世界单位，
+        /// 移速 / 闪避距离 / 跳跃高度的格数口径必须跟着改，否则角色相对地图会快 20%。
+        /// 不改场地半径，半径由 <see cref="ConfigureArena"/> 单独给。
+        /// </summary>
+        public void SetUnitsPerCell(float units)
+        {
+            unitsPerCell = units > 0f ? units : 1f;
+        }
+
+        /// <summary>当前一格对应的世界单位。</summary>
+        public float UnitsPerCell
+        {
+            get { return unitsPerCell; }
+        }
+
         public void ConfigureArena(Vector2 center, bool clamp, float radius, float units)
         {
             arenaCenter = center;

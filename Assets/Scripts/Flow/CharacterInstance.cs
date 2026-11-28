@@ -18,12 +18,14 @@ namespace Ring.Flow
     [AddComponentMenu("钟声/角色实例 CharacterInstance")]
     public sealed class CharacterInstance : MonoBehaviour
     {
-        private static Sprite placeholderSprite;
-
         [Header("身份")]
         [SerializeField] private int participantId;
         [SerializeField] private bool isPlayer;
         [SerializeField] private PersonaId persona = PersonaId.Swordsman;
+
+        /// <summary>已构建形象所用的人设；和「特质决定的人设」不一致时重建视觉。</summary>
+        private PersonaId visualPersona = PersonaId.Swordsman;
+        private bool visualBuilt;
 
         [Header("血量（运行时）")]
         [SerializeField] private float maxHealth = 100f;
@@ -188,6 +190,48 @@ namespace Ring.Flow
         public PersonaId CompletedPersona
         {
             get { return Participant != null ? Participant.CompletedPersona : default; }
+        }
+
+        /// <summary>
+        /// 特质决定的人设：手上持有哪个人设的特质，就是哪个人设。
+        /// 多张特质时取最后获得的那张（夺取别人的特质立刻改变你的身份）；
+        /// 一张特质都没有时退回剑士。
+        /// </summary>
+        public PersonaId TraitPersona
+        {
+            get
+            {
+                if (Participant != null && Participant.Traits.Count > 0)
+                {
+                    return Participant.Traits[Participant.Traits.Count - 1].Persona;
+                }
+
+                return PersonaId.Swordsman;
+            }
+        }
+
+        /// <summary>当前形象实际使用的人设（没有专属序列帧的人设统一借剑士占位）。</summary>
+        public PersonaId VisualPersona
+        {
+            get { return ResolveVisualPersona(TraitPersona); }
+        }
+
+        /// <summary>
+        /// 目前剑士/斯巴达/力士/精灵游侠有序列帧；其余人设暂时借剑士当占位。
+        /// 新人设补齐美术后，在 RefreshVisualAnimation 里接上组件、再把这里放行即可。
+        /// </summary>
+        public static PersonaId ResolveVisualPersona(PersonaId source)
+        {
+            switch (source)
+            {
+                case PersonaId.Swordsman:
+                case PersonaId.Spartan:
+                case PersonaId.Strongman:
+                case PersonaId.Ranger:
+                    return source;
+                default:
+                    return PersonaId.Swordsman;
+            }
         }
 
         /// <summary>由生成器调用：绑定 id、数值资产与是否玩家。</summary>
@@ -737,6 +781,9 @@ namespace Ring.Flow
 
                 abilities.NotifyHealth(currentHealth);
             }
+
+            // 特质可能刚被夺取/重新分配：形象跟着「特质所属人设」走，这里统一刷新。
+            BuildVisual();
         }
 
         /// <summary>发放本命普攻卡（普攻不属于钟声卡池，生成时直接给）。</summary>
@@ -902,7 +949,7 @@ namespace Ring.Flow
             }
         }
 
-        // ---------- 占位视觉 ----------
+        // ---------- 视觉构建（形象跟随特质） ----------
 
         private void BuildVisual()
         {
@@ -936,95 +983,155 @@ namespace Ring.Flow
 
             renderer.sortingOrder = isPlayer ? 10 : 5;
 
-            // 剑士走序列帧：颜色、尺寸与脚底对齐都由 SwordsmanSpriteAnimation 接管。
-            // 这里不能套占位色块——否则整张水墨图会被染成人设色，方块尺寸也会盖住人物。
-            if (persona == PersonaId.Swordsman)
+            // 形象跟着「特质」走：特质属于什么人设，就用什么人设的序列帧。
+            // 颜色、尺寸与脚底对齐全部交给动画组件接管，这里不能再套占位色块。
+            PersonaId target = VisualPersona;
+
+            if (visualBuilt && target == visualPersona)
             {
-                renderer.color = Color.white;
-                go.transform.localPosition = Vector3.zero;
-                go.transform.localScale = Vector3.one;
-
-                var animation = go.GetComponent<Ring.Characters.SwordsmanSpriteAnimation>();
-                if (animation == null)
-                {
-                    // AddComponent 会立即触发 Awake，由组件自己加载帧并套用脚底对齐。
-                    go.AddComponent<Ring.Characters.SwordsmanSpriteAnimation>();
-                }
-                else
-                {
-                    // 角色被提升为玩家时外观会重建，让组件重新套用当前状态。
-                    animation.RefreshVisual();
-                }
-
+                // 人设没变（提升为玩家、换牌但特质未变）：让现有组件重新套一次状态。
+                RefreshVisualAnimation(go, target);
                 return;
             }
 
-            if (persona == PersonaId.Strongman)
-            {
-                renderer.color = Color.white;
-                go.transform.localPosition = Vector3.zero;
-                go.transform.localScale = Vector3.one;
-                if (go.GetComponent<Ring.Characters.StrongmanSpriteAnimation>() == null)
-                    go.AddComponent<Ring.Characters.StrongmanSpriteAnimation>();
-                return;
-            }
-
-            if (persona == PersonaId.Spartan)
-            {
-                renderer.color = Color.white;
-                go.transform.localPosition = Vector3.zero;
-                go.transform.localScale = Vector3.one;
-
-                var animation = go.GetComponent<Ring.Characters.SpartanSpriteAnimation>();
-                if (animation == null)
-                {
-                    // AddComponent 会立即触发 Awake，由组件自己加载帧并套用脚底对齐。
-                    go.AddComponent<Ring.Characters.SpartanSpriteAnimation>();
-                }
-                else
-                {
-                    animation.RefreshVisual();
-                }
-
-                return;
-            }
-
-            // 其余五个人设继续用纯色方块占位。
-            renderer.sprite = GetPlaceholderSprite();
-            renderer.color = GetPersonaColor(persona, isPlayer);
-
-            // 1×1 的白色 sprite，靠 transform 缩放给出方块大小。
-            go.transform.localScale = new Vector3(0.9f, 0.9f, 1f);
+            // 人设变了：清掉旧的表现层（动画组件 + 它们自己生成的子物体），避免两套动画
+            // 抢同一个 SpriteRenderer，也避免旧组件的残留子物体（如游侠的光晕）留在场上。
+            ClearVisualExtras(go);
+            renderer.sprite = null;
+            renderer.color = Color.white;
             go.transform.localPosition = Vector3.zero;
+            go.transform.localScale = Vector3.one;
+
+            // 新渲染器默认朝右；CombatBody 只在朝向真发生翻转时才写 flipX，这里补一次。
+            CombatBody combatBody = Body;
+            if (combatBody != null)
+            {
+                renderer.flipX = combatBody.FacingSign < 0;
+            }
+
+            visualPersona = target;
+            visualBuilt = true;
+            RefreshVisualAnimation(go, target);
         }
 
-        private static Sprite GetPlaceholderSprite()
+        /// <summary>给 Visual 挂上（或刷新）该人设的序列帧组件。</summary>
+        private static void RefreshVisualAnimation(GameObject visual, PersonaId target)
         {
-            if (placeholderSprite != null)
+            switch (target)
             {
-                return placeholderSprite;
+                case PersonaId.Spartan:
+                {
+                    var animation = visual.GetComponent<SpartanSpriteAnimation>();
+                    if (animation == null)
+                    {
+                        // AddComponent 会立即触发 Awake，由组件自己加载帧并套用脚底对齐。
+                        visual.AddComponent<SpartanSpriteAnimation>();
+                    }
+                    else
+                    {
+                        animation.RefreshVisual();
+                    }
+
+                    return;
+                }
+
+                case PersonaId.Strongman:
+                {
+                    var animation = visual.GetComponent<StrongmanSpriteAnimation>();
+                    if (animation == null)
+                    {
+                        visual.AddComponent<StrongmanSpriteAnimation>();
+                    }
+                    else
+                    {
+                        animation.RefreshVisual();
+                    }
+
+                    return;
+                }
+
+                case PersonaId.Ranger:
+                {
+                    var animation = visual.GetComponent<ElfRangerSpriteAnimation>();
+                    if (animation == null)
+                    {
+                        visual.AddComponent<ElfRangerSpriteAnimation>();
+                    }
+                    else
+                    {
+                        animation.RefreshVisual();
+                    }
+
+                    return;
+                }
+
+                default:
+                {
+                    var animation = visual.GetComponent<SwordsmanSpriteAnimation>();
+                    if (animation == null)
+                    {
+                        visual.AddComponent<SwordsmanSpriteAnimation>();
+                    }
+                    else
+                    {
+                        animation.RefreshVisual();
+                    }
+
+                    return;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 换人设时清掉 Visual 上的旧表现层：动画组件自己生成的表现子物体（如游侠的 Halo），
+        /// 以及除 Transform / SpriteRenderer 之外的所有组件。
+        /// 这里不逐个枚举动画组件类型——以后新人设自带新的表现组件时不用回头改这里。
+        /// </summary>
+        private static void ClearVisualExtras(GameObject visual)
+        {
+            for (int i = visual.transform.childCount - 1; i >= 0; i--)
+            {
+                DestroyVisualObject(visual.transform.GetChild(i).gameObject);
             }
 
-            var texture = new Texture2D(4, 4, TextureFormat.RGBA32, false)
+            Component[] components = visual.GetComponents<Component>();
+            for (int i = 0; i < components.Length; i++)
             {
-                name = "RingPlaceholder",
-                filterMode = FilterMode.Point,
-                wrapMode = TextureWrapMode.Clamp,
-            };
+                Component component = components[i];
+                if (component == null || component is Transform || component is SpriteRenderer)
+                {
+                    continue;
+                }
 
-            var colors = new Color32[16];
-            for (int i = 0; i < colors.Length; i++)
+                if (component is Behaviour behaviour)
+                {
+                    // 先停掉，避免等 Destroy 真正生效前它又跑一帧 Update。
+                    behaviour.enabled = false;
+                }
+
+                DestroyVisualObject(component);
+            }
+        }
+
+        /// <summary>
+        /// 运行期一律 Destroy：钟声可能从物理/触发回调里触发，那里不允许 DestroyImmediate；
+        /// 编辑期（编辑器里预览构建形象）只能 DestroyImmediate。
+        /// </summary>
+        private static void DestroyVisualObject(UnityEngine.Object target)
+        {
+            if (target == null)
             {
-                colors[i] = new Color32(255, 255, 255, 255);
+                return;
             }
 
-            texture.SetPixels32(colors);
-            texture.Apply();
-
-            placeholderSprite = Sprite.Create(
-                texture, new Rect(0f, 0f, 4f, 4f), new Vector2(0.5f, 0.5f), 4f);
-            placeholderSprite.name = "RingPlaceholder";
-            return placeholderSprite;
+            if (Application.isPlaying)
+            {
+                UnityEngine.Object.Destroy(target);
+            }
+            else
+            {
+                UnityEngine.Object.DestroyImmediate(target);
+            }
         }
 
         /// <summary>六人设各一个辨识色，玩家额外加亮。</summary>

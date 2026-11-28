@@ -31,6 +31,7 @@ namespace Ring.Flow
         private SwordsmanSpriteAnimation spriteAnimation;
         private StrongmanSpriteAnimation strongmanAnimation;
         private SpartanSpriteAnimation spartanAnimation;
+        private ElfRangerSpriteAnimation rangerAnimation;
         private bool wasMoving;
 
         public bool HasDodgeInvulnerability => body != null && body.HasDodgeInvulnerability;
@@ -62,28 +63,38 @@ namespace Ring.Flow
             // 攻击动画期间保留施放时锁定的朝向，避免移动输入把 SpriteRenderer.flipX 改回去。
             bool actionPlaying = (SpriteAnimation != null && SpriteAnimation.IsActing)
                                  || (StrongmanAnimation != null && StrongmanAnimation.IsActing)
-                                 || (SpartanAnimation != null && SpartanAnimation.IsActing);
+                                 || (SpartanAnimation != null && SpartanAnimation.IsActing)
+                                 || (RangerAnimation != null && RangerAnimation.IsActing);
             body.SetMoveInput(move, updateFacing: !actionPlaying);
 
             bool moving = move.SqrMagnitude > CombatMath.Epsilon &&
                           !instance.Combat.Immobile && !instance.Derived.Immobile;
             SetAnimationsMoving(moving);
 
-            if (input.DodgePressed)
+            if (input.DodgePressed && body.RequestDodge(move))
             {
-                body.RequestDodge(move);
+                // 闪避分镜：有方向输入时按「与当前朝向的点积」判前后闪；无输入视为前闪。
+                ElfRangerSpriteAnimation ranger = RangerAnimation;
+                if (ranger != null)
+                {
+                    bool forward = move.SqrMagnitude <= CombatMath.Epsilon
+                                   || Vec2.Dot(move, body.FacingVector) >= 0f;
+                    ranger.PlayDodge(forward);
+                }
             }
 
             if (input.JumpPressed && body.RequestJump())
             {
                 // 跳跃分镜显式绑定：与 SetMoving / PlayPunch / PlayDash 一样由输入适配层驱动。
-                // 力士有 Jump_00~07 分镜；剑士没有跳跃序列帧，保持当前跑动/站立帧即可。
+                // 力士有 Jump_00~07、游侠有 Jump_00~05；剑士与斯巴达没有跳跃序列帧，保持当前帧。
                 // 动画组件内部对 IsAirborne 的轮询仅作兜底（覆盖 AI / 技能起跳），并做幂等保护。
                 StrongmanSpriteAnimation strongman = StrongmanAnimation;
                 if (strongman != null)
                 {
                     strongman.PlayJump();
                 }
+
+                RangerAnimation?.PlayJump();
             }
 
             if (logActionInputs && (input.DodgePressed || input.JumpPressed))
@@ -103,6 +114,16 @@ namespace Ring.Flow
         {
             arenaCenter = center;
             body?.SetArenaCenter(center);
+        }
+
+        /// <summary>
+        /// 同步「一格 = 多少世界单位」。只改格距，不动场地半径——
+        /// 半径由落位层按地图场地单独配置（见 MatchSpawner）。
+        /// </summary>
+        public void SetUnitsPerCell(float units)
+        {
+            unitsPerCell = units > 0f ? units : 1f;
+            body?.SetUnitsPerCell(unitsPerCell);
         }
 
         private void SetAnimationsMoving(bool moving)
@@ -125,6 +146,7 @@ namespace Ring.Flow
                 strongman.SetMoving(moving);
             }
             SpartanAnimation?.SetMoving(moving);
+            RangerAnimation?.SetMoving(moving);
         }
 
         private SwordsmanSpriteAnimation SpriteAnimation
@@ -159,6 +181,15 @@ namespace Ring.Flow
             {
                 if (spartanAnimation == null) spartanAnimation = GetComponentInChildren<SpartanSpriteAnimation>();
                 return spartanAnimation;
+            }
+        }
+
+        private ElfRangerSpriteAnimation RangerAnimation
+        {
+            get
+            {
+                if (rangerAnimation == null) rangerAnimation = GetComponentInChildren<ElfRangerSpriteAnimation>();
+                return rangerAnimation;
             }
         }
     }

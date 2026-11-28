@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 
 namespace Ring.Maps
@@ -69,6 +70,26 @@ namespace Ring.Maps
         public bool HasGroundSurface
         {
             get { return currentScene != null && currentScene.HasGround; }
+        }
+
+        /// <summary>
+        /// 地图切换完成、场地几何（25×12 格 + 地面顶面）已算好时触发。
+        /// 与 <see cref="Ring.Flow.GameFlow.MapChanged"/> 的区别：那个是「数据层决定了哪张图」，
+        /// 这个是「这张图已经在场景里激活并算完几何」，落位/相机可以直接消费。
+        /// </summary>
+        public event Action<BattleMapId> MapShown;
+
+        /// <summary>当前地图的场地几何；没展示地图或没算出来时 IsValid = false。</summary>
+        public MapStage CurrentStage
+        {
+            get { return currentScene != null ? currentScene.Stage : default(MapStage); }
+        }
+
+        /// <summary>取当前地图的场地几何（背景矩形 + 25×12 格 + 地面顶面）。</summary>
+        public bool TryGetStage(out MapStage stage)
+        {
+            stage = CurrentStage;
+            return stage.IsValid;
         }
 
         /// <summary>
@@ -168,7 +189,14 @@ namespace Ring.Maps
                     + "（资源 " + id.ToZoneFolder() + "）"
                     + (target.HasGround
                         ? "，地面顶面 Y=" + target.GroundSurfaceY.ToString("F2")
-                        : "，未接碰撞地面"), this);
+                        : "，未接碰撞地面")
+                    + (target.HasStage ? "；" + target.Stage.Describe() : "；场地几何未算出"), this);
+            }
+
+            // 地图已激活且几何算完：落位 / 相机可以在这里消费场地，不必再猜顺序。
+            if (MapShown != null)
+            {
+                MapShown(id);
             }
         }
 

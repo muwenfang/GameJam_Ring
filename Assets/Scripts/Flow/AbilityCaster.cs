@@ -39,6 +39,15 @@ namespace Ring.Flow
         public GridCoord LastAimCell { get; private set; }
         public bool HasLastAimCell { get; private set; }
 
+        /// <summary>
+        /// 一格对应的世界单位。地图按 25×12 铺满视口时由落位层写入（约 0.83）；
+        /// 射程、命中形状、弹道距离都吃这个值，必须和 CombatBody 保持一致。
+        /// </summary>
+        public void SetUnitsPerCell(float units)
+        {
+            unitsPerCell = units > 0f ? units : 1f;
+        }
+
         private CharacterInstance instance;
         private CombatBody body;
         private readonly ProjectileWorld projectiles = new ProjectileWorld();
@@ -46,11 +55,11 @@ namespace Ring.Flow
         private readonly List<int> hitBuffer = new List<int>(8);
 
         private SwordsmanSpriteAnimation swordAnimation;
-        private bool swordAnimationSearched;
         private StrongmanSpriteAnimation strongmanAnimation;
-        private bool strongmanAnimationSearched;
         private SpartanSpriteAnimation spartanAnimation;
-        private bool spartanAnimationSearched;
+        private ElfRangerSpriteAnimation rangerAnimation;
+        private Sprite[] arrowFrames;
+        private bool arrowFramesLoaded;
         private float projectileTime;
         private float meditationHealTimer;
         private readonly Dictionary<ProjectileState, ProjectileView> projectileViews =
@@ -317,8 +326,20 @@ namespace Ring.Flow
         private void ExecuteAbility(AbilityActivation activation, AbilitySlot slot)
         {
             AbilityDefinition definition = activation.Definition;
-            if (definition == null || definition.Shape == AbilityShape.Self || definition.Shape == AbilityShape.None)
+            if (definition == null)
             {
+                return;
+            }
+
+            if (definition.Shape == AbilityShape.Self || definition.Shape == AbilityShape.None)
+            {
+                // 游侠「自然恩赐」：治疗由 activation 在施法瞬间结算，这里只补表现。
+                // 光晕（减伤 1.5s）与治疗分镜一起点亮，玩家才看得出自己进了减伤状态。
+                if (slot == AbilitySlot.Ego && definition.HealAmount > 0f)
+                {
+                    RangerAnimation?.PlayHeal(definition.DurationSeconds);
+                }
+
                 return;
             }
 
@@ -334,9 +355,29 @@ namespace Ring.Flow
                 return;
             }
 
+            // 游侠「缚地荆棘」：鼠标选点生成地形，本身不造成伤害，
+            // 由 ElfRangerBrambleZone 负责长出 / 保持 / 消散与「离开即缠绕」。
+            if (definition.Shape == AbilityShape.Ground)
+            {
+                SpawnBrambleZone(definition);
+                return;
+            }
+
             if (definition.ProjectileSpeed > 0f &&
                 (definition.Shape == AbilityShape.Line || definition.Shape == AbilityShape.Fan))
             {
+                // 游侠的箭要等「撒放帧」才离弦：破甲重箭用重箭分镜，其余弹道用短弓分镜。
+                ElfRangerSpriteAnimation ranger = RangerAnimation;
+                if (ranger != null)
+                {
+                    System.Action release = () => SpawnProjectiles(definition, slot);
+                    bool heavyShot = slot == AbilitySlot.Id;
+                    if (heavyShot ? ranger.PlayHeavy(release) : ranger.PlayAttack(release))
+                    {
+                        return;
+                    }
+                }
+
                 SpawnProjectiles(definition, slot);
                 return;
             }
@@ -392,7 +433,8 @@ namespace Ring.Flow
                     RootSeconds = definition.RootSeconds,
                     VulnerabilityPercent = definition.DamageTakenBonusPercent,
                     VulnerabilitySeconds = EffectDuration(definition),
-                    Slot = (int)slot
+                    Slot = (int)slot,
+                    ArrowVisual = definition.Persona == PersonaId.Ranger
                 };
                 projectiles.SpawnFan(template, definition.PelletCount, definition.SpreadDegrees);
                 return;
@@ -420,8 +462,59 @@ namespace Ring.Flow
                 RootSeconds = definition.RootSeconds,
                 VulnerabilityPercent = definition.DamageTakenBonusPercent,
                 VulnerabilitySeconds = EffectDuration(definition),
-                Slot = (int)slot
+                Slot = (int)slot,
+                ArrowVisual = definition.Persona == PersonaId.Ranger
             });
+        }
+
+        /// <summary>
+        /// 游侠「缚地荆棘」：在以瞄准点为中心的位置生成 3×1 荆棘地形。
+        /// 地形本身不结算伤害，缠绕由 <see cref="ElfRangerBrambleZone"/> 在目标离开时施加。
+        /// </summary>
+        private void SpawnBrambleZone(AbilityDefinition definition)
+        {
+            float reach = definition.RangeCells > 0f ? definition.RangeCells : 4f;
+            Vec2 center = GetAimWorldPoint(reach);
+            Vec2 direction = GetAimDirection();
+            float duration = definition.DurationSeconds > 0f ? definition.DurationSeconds : 2f;
+
+            ElfRangerBrambleZone.Spawn(
+                new Vector3(center.X, center.Y, 0f),
+                new Vector2(direction.X, direction.Y),
+                Mathf.Max(1f, definition.AreaLengthCells),
+                Mathf.Max(0.5f, definition.AreaWidthCells),
+                duration,
+                instance.Id);
+
+            // 施法表现：投掷后立刻进入重箭分镜（与「投矛复用突刺」同一处理思路）。
+            RangerAnimation?.PlayHeavy(null);
+
+            if (logCasts)
+            {
+                Debug.Log("[技能] 缚地荆棘 生成于 " + AbilityMath.Number(center.X) + "," + AbilityMath.Number(center.Y), this);
+            }
+        }
+
+        /// <summary>
+        /// 鼠标落点，并夹在 <paramref name="maxDistanceCells"/> 格内；没有有效瞄准时退回正前方。
+        /// </summary>
+        private Vec2 GetAimWorldPoint(float maxDistanceCells)
+        {
+            Vec2 origin = ToVec2(transform.position);
+            float max = Mathf.Max(0.5f, maxDistanceCells) * unitsPerCell;
+
+            GameInput input = GameInput.Instance;
+            if (input != null && input.HasValidAim)
+            {
+                Vec2 point = ToVec2(input.AimWorldPoint);
+                Vec2 offset = point - origin;
+                if (offset.SqrMagnitude > 0.001f)
+                {
+                    return offset.Magnitude > max ? origin + offset.Normalized * max : point;
+                }
+            }
+
+            return origin + GetAimDirection() * max;
         }
 
         private void HandleProjectileHit(ProjectileState projectile, CombatTargetInfo target, Vec2 point, float damage)
@@ -901,6 +994,13 @@ namespace Ring.Flow
                 return true;
             }
 
+            // 游侠短弓：10 帧 20fps，撒放帧 6 = 0.30s，箭在抬手之后才离弦。
+            ElfRangerSpriteAnimation ranger = RangerAnimation;
+            if (ranger != null && ranger.PlayAttack(resolve))
+            {
+                return true;
+            }
+
             resolve();
             return true;
         }
@@ -1169,6 +1269,19 @@ namespace Ring.Flow
                 if (!projectileViews.TryGetValue(state, out view) || view == null)
                 {
                     view = ProjectileView.Create(transform, ProjectileColor(state.Spec), state.Spec.VisualSize);
+
+                    // 游侠的箭用 ElfRanger_Arrow_* 序列帧做弹道视觉（12 帧 30fps 循环）；
+                    // 其他人设的弹道保持默认白点。判定看技能所属人设而不是施法者造型：
+                    // 形象跟着特质走，游侠属性的玩家可能正顶着剑士的造型在放弓。
+                    if (state.Spec.ArrowVisual)
+                    {
+                        Sprite[] arrow = ArrowFrames();
+                        if (arrow != null && arrow.Length > 0)
+                        {
+                            view.ApplyFrames(arrow, 30f, 1.25f, state.Spec.Direction.X < 0f);
+                        }
+                    }
+
                     projectileViews[state] = view;
                 }
 
@@ -1244,13 +1357,13 @@ namespace Ring.Flow
         private static Vec2 ToVec2(Vector2 value) => new Vec2(value.x, value.y);
         private static Vec2 ToVec2(Vector3 value) => new Vec2(value.x, value.y);
 
+        // 形象会随特质换人设，旧的序列帧组件会被销毁：缓存引用变成 Unity null 时重新找。
         private SwordsmanSpriteAnimation SwordAnimation
         {
             get
             {
-                if (!swordAnimationSearched)
+                if (swordAnimation == null)
                 {
-                    swordAnimationSearched = true;
                     swordAnimation = GetComponentInChildren<SwordsmanSpriteAnimation>();
                 }
 
@@ -1262,9 +1375,8 @@ namespace Ring.Flow
         {
             get
             {
-                if (!strongmanAnimationSearched)
+                if (strongmanAnimation == null)
                 {
-                    strongmanAnimationSearched = true;
                     strongmanAnimation = GetComponentInChildren<StrongmanSpriteAnimation>();
                 }
 
@@ -1276,14 +1388,55 @@ namespace Ring.Flow
         {
             get
             {
-                if (!spartanAnimationSearched)
+                if (spartanAnimation == null)
                 {
-                    spartanAnimationSearched = true;
                     spartanAnimation = GetComponentInChildren<SpartanSpriteAnimation>();
                 }
 
                 return spartanAnimation;
             }
+        }
+
+        private ElfRangerSpriteAnimation RangerAnimation
+        {
+            get
+            {
+                if (rangerAnimation == null)
+                {
+                    rangerAnimation = GetComponentInChildren<ElfRangerSpriteAnimation>();
+                }
+
+                return rangerAnimation;
+            }
+        }
+
+        /// <summary>弹道视觉用的箭矢序列帧（只加载一次，全角色共用）。</summary>
+        private Sprite[] ArrowFrames()
+        {
+            if (arrowFramesLoaded)
+            {
+                return arrowFrames;
+            }
+
+            arrowFramesLoaded = true;
+            Sprite[] all = Resources.LoadAll<Sprite>("ElfRanger");
+            if (all == null || all.Length == 0)
+            {
+                return null;
+            }
+
+            var picked = new List<Sprite>(12);
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (all[i] != null && all[i].name.StartsWith("ElfRanger_Arrow_", System.StringComparison.Ordinal))
+                {
+                    picked.Add(all[i]);
+                }
+            }
+
+            picked.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
+            arrowFrames = picked.ToArray();
+            return arrowFrames;
         }
 
         // ---------------- 动作表现（与判定对齐） ----------------
@@ -1318,6 +1471,13 @@ namespace Ring.Flow
                 return true;
             }
 
+            // 游侠：混装别的近战技能时用「重箭抬手」顶一段动作，避免血条掉了人不动。
+            ElfRangerSpriteAnimation ranger = RangerAnimation;
+            if (ranger != null && ranger.PlayHeavy(onImpact))
+            {
+                return true;
+            }
+
             return false;
         }
 
@@ -1333,6 +1493,14 @@ namespace Ring.Flow
             StrongmanSpriteAnimation strongman = StrongmanAnimation;
             if (strongman != null && strongman.PlayDash(onImpact))
             {
+                return true;
+            }
+
+            // 游侠没有位移序列帧，用前闪分镜顶替。
+            ElfRangerSpriteAnimation ranger = RangerAnimation;
+            if (ranger != null && ranger.PlayDodge(true))
+            {
+                onImpact?.Invoke();
                 return true;
             }
 

@@ -47,12 +47,22 @@ namespace Ring.Flow
         [Tooltip("场地 / 对手重排（位置钟声、B8 重分配）时立即对齐相机，避免长距离平滑滑动。")]
         private bool snapOnArenasChanged = true;
 
+        [Header("场地锁定（地图屏幕对齐）")]
+        [SerializeField]
+        [Tooltip("把相机限制在当前地图的场地矩形内。地图按视口等比铺满时，Y 会被钉住、X 只能小幅平移，背景不会被跟出屏幕。")]
+        private bool clampToStage = true;
+
+        [SerializeField]
+        [Tooltip("战斗地图展示器；留空自动在场景里找。")]
+        private BattleMapPresenter mapPresenter;
+
         [SerializeField]
         [Tooltip("是否把目标切换打印到 Console。")]
         private bool logFollow;
 
         private Vector3 velocity;
         private GameFlow gameFlow;
+        private bool presenterSearched;
 
         private void Start()
         {
@@ -103,6 +113,8 @@ namespace Ring.Flow
                 desired.y = target.position.y + offset.y;
             }
 
+            desired = ClampToStage(desired);
+
             // 刻意不改 Z：Main Camera 在场景里的深度（通常 -10）由用户自己设定。
             if (smoothTime <= 0f)
             {
@@ -147,8 +159,54 @@ namespace Ring.Flow
                 desired.y = target.position.y + offset.y;
             }
 
+            desired = ClampToStage(desired);
+
             velocity = Vector3.zero;
             transform.position = desired;
+        }
+
+        /// <summary>
+        /// 把相机中心限制在场地矩形内：视口比场地大时直接居中，比场地小时只允许在余量内平移。
+        /// 这一步保证「地图按视口对齐」在相机跟随时依然成立，而不是跟两步就露出黑边。
+        /// </summary>
+        private Vector3 ClampToStage(Vector3 desired)
+        {
+            if (!clampToStage)
+            {
+                return desired;
+            }
+
+            Camera cam = GetComponent<Camera>();
+            if (cam == null || !cam.orthographic)
+            {
+                return desired;
+            }
+
+            if (mapPresenter == null && !presenterSearched)
+            {
+                mapPresenter = FindObjectOfType<BattleMapPresenter>();
+                presenterSearched = true;
+            }
+
+            MapStage stage;
+            if (mapPresenter == null || !mapPresenter.TryGetStage(out stage))
+            {
+                return desired;
+            }
+
+            float halfH = cam.orthographicSize;
+            float halfW = halfH * cam.aspect;
+            Rect rect = stage.WorldRect;
+
+            desired.x = rect.width <= halfW * 2f
+                ? rect.center.x
+                : Mathf.Clamp(desired.x, rect.xMin + halfW, rect.xMax - halfW);
+
+            desired.y = rect.height <= halfH * 2f
+                ? rect.center.y
+                : Mathf.Clamp(desired.y, rect.yMin + halfH, rect.yMax - halfH);
+
+            return desired;
         }
 
         private void HandleStateChanged(MatchState from, MatchState to)

@@ -170,6 +170,7 @@ public static class MapSceneSetupTools
             }
 
             const string undoLabel = "按屏幕重新对齐地图与碰撞地面";
+            Undo.RecordObject(mapRoot, undoLabel);
             Undo.RecordObject(fitter, undoLabel);
             Undo.RecordObject(bg.transform, undoLabel);
             Undo.RecordObject(groundGo.transform, undoLabel);
@@ -177,6 +178,14 @@ public static class MapSceneSetupTools
 
             fitter.Configure(sceneCamera, bg, groundGo.transform, box);
             fitter.Fit();
+
+            // MapScene 的场地字段也补上：运行时即使没有 fitter，也能就地算出 25×12 场地。
+            MapScene mapScene = mapRoot.GetComponent<MapScene>();
+            if (mapScene != null)
+            {
+                Undo.RecordObject(mapScene, undoLabel);
+                WireStageFields(mapScene, sceneCamera, bg, groundGo.transform, box, fitter);
+            }
 
             EditorUtility.SetDirty(fitter);
             EditorUtility.SetDirty(bg.transform);
@@ -322,7 +331,8 @@ public static class MapSceneSetupTools
             bool aligned = fitter != null;
             GameObject bgGo = FindChildNamed(mapScene.transform, BackgroundChildName);
             string scaleInfo = bgGo != null
-                ? "BG缩放=(" + bgGo.transform.localScale.x.ToString("F3") + ", "
+                ? "根缩放=" + mapScene.transform.localScale.x.ToString("F3")
+                  + "，BG设计缩放=(" + bgGo.transform.localScale.x.ToString("F3") + ", "
                   + bgGo.transform.localScale.y.ToString("F3") + ")"
                 : "BG缺失";
 
@@ -331,7 +341,7 @@ public static class MapSceneSetupTools
                       + " | MapId=" + mapScene.MapId + (idOk ? " ✓" : " ✗ 应为 " + info.Id)
                       + " | 地面=" + (groundOk ? "顶面 Y=" + mapScene.GroundSurfaceY.ToString("F2") : "未接")
                       + " | " + scaleInfo
-                      + " | 屏幕对齐=" + (aligned ? "已挂 MapScreenFitter" : "未挂（点「按屏幕重新对齐地图与碰撞地面」补上）")
+                      + " | 屏幕对齐=" + (aligned ? "已挂 MapScreenFitter" : "未挂（MapScene 运行时仍会自动算）")
                       + " | 初始激活=" + mapScene.gameObject.activeSelf
                       + (mapScene.gameObject.activeSelf ? "（建议存成隐藏）" : ""));
         }
@@ -457,6 +467,9 @@ public static class MapSceneSetupTools
         var fitter = root.AddComponent<MapScreenFitter>();
         fitter.Configure(sceneCamera, bgRenderer, groundGo.transform, box);
         fitter.Fit();
+
+        // 场地几何字段（25×12 格 / 地面顶面）也写到 MapScene 上，运行时无需再点菜单。
+        WireStageFields(mapScene, sceneCamera, bgRenderer, groundGo.transform, box, fitter);
 
         // 六张根节点存成隐藏：Show() 只激活抽中的那张，初始全激活会叠在一起。
         root.SetActive(false);
@@ -597,6 +610,37 @@ public static class MapSceneSetupTools
         if (changed)
         {
             so.ApplyModifiedPropertiesWithoutUndo();
+        }
+    }
+
+    /// <summary>
+    /// 把场地相关引用写到 MapScene 上（相机 / 背景 / 地面 / fitter）。
+    /// 只改序列化引用，不创建、不移动任何物体；运行时即使删掉 fitter 也能就地算场地。
+    /// </summary>
+    private static void WireStageFields(
+        MapScene mapScene, Camera camera, SpriteRenderer background, Transform ground, BoxCollider2D box, MapScreenFitter fitter)
+    {
+        if (mapScene == null)
+        {
+            return;
+        }
+
+        var so = new SerializedObject(mapScene);
+        SetRef(so, "stageCamera", camera);
+        SetRef(so, "background", background);
+        SetRef(so, "groundRoot", ground);
+        SetRef(so, "groundCollider", box);
+        SetRef(so, "screenFitter", fitter);
+        so.ApplyModifiedPropertiesWithoutUndo();
+        EditorUtility.SetDirty(mapScene);
+    }
+
+    private static void SetRef(SerializedObject so, string propertyName, UnityEngine.Object value)
+    {
+        SerializedProperty prop = so.FindProperty(propertyName);
+        if (prop != null)
+        {
+            prop.objectReferenceValue = value;
         }
     }
 

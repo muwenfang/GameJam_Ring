@@ -47,8 +47,13 @@ namespace Ring.Maps
         [Header("设计网格（与 map_config.json 的 25 × 12 一致）")]
         [SerializeField]
         [Min(1f)]
+        [Tooltip("背景图宽度对应的总列数，用来算「一格多宽」。默认 25（MapKit 口径）。")]
+        private float designColumns = MapStageBuilder.DesignColumns;
+
+        [SerializeField]
+        [Min(1f)]
         [Tooltip("背景图高度对应的总行数，用来把「一行地面」换算成图片比例。默认 12。")]
-        private float designRows = 12f;
+        private float designRows = MapStageBuilder.DesignRows;
 
         [SerializeField]
         [Min(0.01f)]
@@ -57,7 +62,7 @@ namespace Ring.Maps
 
         [SerializeField]
         [Tooltip("背景 Sprite 为空时的兜底尺寸（25 × 12 世界单位）。")]
-        private Vector2 fallbackSpriteSize = new Vector2(25f, 12f);
+        private Vector2 fallbackSpriteSize = MapStageBuilder.FallbackSpriteSize;
 
         [Header("运行方式")]
         [SerializeField]
@@ -69,12 +74,37 @@ namespace Ring.Maps
         private bool refitOnAspectChange = true;
 
         private float lastAspect = -1f;
+        private MapStage stage;
 
         /// <summary>最近一次计算出的背景世界缩放系数，供校验与调试读取。</summary>
         public float LastFitScale { get; private set; }
 
         /// <summary>最近一次计算出的地面顶面世界 Y，供校验与调试读取。</summary>
         public float LastGroundSurfaceY { get; private set; }
+
+        /// <summary>最近一次计算出的场地几何（背景矩形 + 25×12 格 + 地面）。</summary>
+        public MapStage Stage
+        {
+            get { return stage; }
+        }
+
+        /// <summary>是否已经算出有效场地。</summary>
+        public bool HasStage
+        {
+            get { return stage.IsValid; }
+        }
+
+        /// <summary>设计列数（默认 25）。</summary>
+        public float DesignColumns
+        {
+            get { return designColumns; }
+        }
+
+        /// <summary>设计行数（默认 12）。</summary>
+        public float DesignRows
+        {
+            get { return designRows; }
+        }
 
         private void OnEnable()
         {
@@ -141,68 +171,29 @@ namespace Ring.Maps
                 groundCollider = groundRoot.GetComponent<BoxCollider2D>();
             }
 
-            if (background == null || groundRoot == null || groundCollider == null)
+            // 真正的几何只实现一份（MapStageBuilder）：Editor 菜单、运行时自动对齐、本组件共用，
+            // 避免「菜单算一套、进 Play 又算一套」。
+            MapStage computed;
+            if (!MapStageBuilder.TryApply(
+                    cam, transform, background, groundRoot, groundCollider,
+                    designColumns, designRows, groundRows, fallbackSpriteSize, out computed))
             {
                 return;
             }
 
-            Vector2 spriteSize = fallbackSpriteSize;
-            Vector2 boundsCenter = Vector2.zero;
-            if (background.sprite != null)
+            stage = computed;
+            LastFitScale = stage.WorldRect.width / Mathf.Max(0.0001f, SpriteWidth());
+            LastGroundSurfaceY = stage.GroundSurfaceY;
+        }
+
+        private float SpriteWidth()
+        {
+            if (background != null && background.sprite != null)
             {
-                Bounds b = background.sprite.bounds;
-                spriteSize = new Vector2(b.size.x, b.size.y);
-                // pivot 不是几何中心时，用 bounds.center 补偿，保证图片中心仍落在视口中心。
-                boundsCenter = new Vector2(b.center.x, b.center.y);
+                return background.sprite.bounds.size.x;
             }
 
-            float viewH = 2f * cam.orthographicSize;
-            float viewW = viewH * cam.aspect;
-            if (viewH <= 0.0001f || viewW <= 0.0001f
-                || spriteSize.x <= 0.0001f || spriteSize.y <= 0.0001f)
-            {
-                return;
-            }
-
-            // cover：等比缩放取较大者。16:9 下 s = 10/12 ≈ 0.833，背景显示 20.83 × 10，
-            // 正好铺满视口高度；若屏幕比 25:12 更宽，则按宽度放大，上下裁切。
-            float s = Mathf.Max(viewH / spriteSize.y, viewW / spriteSize.x);
-
-            // 父节点（地图根）可能带缩放；换算成本地缩放，保证世界缩放正好是 s。
-            Vector3 lossy = transform.lossyScale;
-            float localSx = s / Mathf.Max(Mathf.Abs(lossy.x), 0.0001f);
-            float localSy = s / Mathf.Max(Mathf.Abs(lossy.y), 0.0001f);
-
-            // 视口中心换算到本物体（地图根）的局部坐标，作为背景与地面的共同基准。
-            Vector3 camWorld = new Vector3(cam.transform.position.x, cam.transform.position.y, 0f);
-            Vector3 localCenter = transform.InverseTransformPoint(camWorld);
-
-            background.transform.localScale = new Vector3(localSx, localSy, 1f);
-            background.transform.localPosition = new Vector3(
-                localCenter.x - boundsCenter.x * localSx,
-                localCenter.y - boundsCenter.y * localSy,
-                0f);
-
-            // 地面 = 图片最底 groundRows 行。图片局部坐标里，
-            // 底边在 -spriteSize.y/2，地面带中心在 -spriteSize.y/2 + groundH/2。
-            float unit = spriteSize.y / Mathf.Max(designRows, 0.0001f);
-            float groundH = unit * groundRows;
-            float groundCenterOffsetY = (-spriteSize.y * 0.5f + groundH * 0.5f) * localSy;
-
-            groundRoot.localScale = new Vector3(localSx, localSy, 1f);
-            groundRoot.localPosition = new Vector3(
-                localCenter.x,
-                localCenter.y + groundCenterOffsetY,
-                0f);
-
-            // collider 用「图片原始单位」表达，配合 localScale=s 后世界尺寸 = (25s × 1s)，
-            // 与背景图里那条地面带完全重合。
-            groundCollider.size = new Vector2(spriteSize.x, groundH);
-            groundCollider.offset = Vector2.zero;
-
-            LastFitScale = s;
-            LastGroundSurfaceY = groundRoot.position.y
-                                 + groundH * 0.5f * Mathf.Abs(groundRoot.lossyScale.y);
+            return Mathf.Max(0.0001f, fallbackSpriteSize.x);
         }
 
         private Camera ResolveCamera()

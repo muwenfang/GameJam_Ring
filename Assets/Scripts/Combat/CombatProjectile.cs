@@ -30,6 +30,13 @@ namespace Ring.Combat
         public float VisualSize = 0.25f;
         public int Slot;
 
+        /// <summary>
+        /// 是否用游侠的箭矢序列帧渲染。由「技能属于哪个人设」决定，和施法者当前长什么样无关：
+        /// 形象已经跟着特质走（见 Docs/18），游侠属性的玩家可能顶着别人设的造型，
+        /// 但放的是弓，飞出去的仍然应该是箭。
+        /// </summary>
+        public bool ArrowVisual;
+
         public CombatStatusSpec[] BuildStatuses()
         {
             var statuses = new List<CombatStatusSpec>(3);
@@ -329,7 +336,8 @@ namespace Ring.Combat
                 VulnerabilitySeconds = source.VulnerabilitySeconds,
                 StatusId = source.StatusId,
                 VisualSize = source.VisualSize,
-                Slot = source.Slot
+                Slot = source.Slot,
+                ArrowVisual = source.ArrowVisual
             };
         }
 
