@@ -1,3 +1,4 @@
+﻿using Ring.Abilities;
 using Ring.UI;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -10,7 +11,7 @@ namespace Ring.EditorTools
     /// 把战斗 HUD 落成场景里的真实物体，方便在 Hierarchy / Inspector 里自由改。
     ///
     /// 为什么要这个菜单：运行时用代码搭 UI 只解决了「有界面」，改位置配色还得回来改代码；
-    /// 生成一次之后，左右两块、中间倒计时、特性栏都是普通 GameObject + RectTransform，
+    /// 生成一次之后，左右两块、中间倒计时、五个技能槽都是普通 GameObject + RectTransform，
     /// 拖动、改颜色、换字体、加图标都能直接在编辑器里做，代码只在运行时负责填数值。
     ///
     /// 圆角与虚线描边是运行时按实际像素尺寸生成的（<see cref="HudSprites"/>），
@@ -104,15 +105,46 @@ namespace Ring.EditorTools
             CheckProperty(so, "bellValue", missing);
             CheckProperty(so, "roundValue", missing);
 
-            if (missing.Count == 0)
+            var tooFewSlots = new System.Collections.Generic.List<string>();
+            CheckSlotRow(so, "playerTraitRow", "玩家", tooFewSlots);
+            CheckSlotRow(so, "opponentTraitRow", "对手", tooFewSlots);
+
+            if (missing.Count == 0 && tooFewSlots.Count == 0)
             {
-                Debug.Log("[HUD] 接线完整：玩家/对手血条、特性栏、倒计时与回合数都已指定。", hud);
+                Debug.Log("[HUD] 接线完整：玩家/对手血条、五个技能槽、倒计时与回合数都已指定。", hud);
                 return;
             }
 
-            Debug.LogWarning(
-                "[HUD] 以下字段为空（留空时运行时会按名字在子物体里找，找不到就不显示）："
-                + string.Join("、", missing), hud);
+            if (missing.Count > 0)
+            {
+                Debug.LogWarning(
+                    "[HUD] 以下字段为空（留空时运行时会按名字在子物体里找，找不到就不显示）："
+                    + string.Join("、", missing), hud);
+            }
+
+            if (tooFewSlots.Count > 0)
+            {
+                Debug.LogWarning(
+                    "[HUD] 技能槽格不足 5 个：" + string.Join("；", tooFewSlots)
+                    + "。运行时会把缺的格子补出来（沿用第 1 格的尺寸），但编辑器里看不到；"
+                    + "想手工调就在场景里复制一个格子改成第 5 格。", hud);
+            }
+        }
+
+        /// <summary>槽位数固定是 <see cref="AbilitySlots.Count"/>（特质/普攻/本我/自我/超我），格子少了给个提示。</summary>
+        private static void CheckSlotRow(SerializedObject so, string propertyName, string side, System.Collections.Generic.List<string> tooFewSlots)
+        {
+            SerializedProperty property = so.FindProperty(propertyName);
+            RectTransform row = property != null ? property.objectReferenceValue as RectTransform : null;
+            if (row == null)
+            {
+                return;
+            }
+
+            if (row.childCount < AbilitySlots.Count)
+            {
+                tooFewSlots.Add(side + " " + propertyName + " 只有 " + row.childCount + " 格");
+            }
         }
 
         private static void CheckProperty(SerializedObject so, string name, System.Collections.Generic.List<string> missing)

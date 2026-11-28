@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using Ring.Characters;
 using Ring.Flow;
 using Ring.Inputs;
@@ -51,7 +51,6 @@ namespace Ring.UI
         private const string ExitButtonName = "Exit";
         private const string FullScreenButtonName = "FullScreen";
         private const string InputButtonName = "Input";
-        private const string KeyBindingPanelName = "KeyBindingPanel";
         private const string CloseSettingsButtonName = "CloseSetting";
         private const string VolumeSliderName = "AudioSlider";
         private const string MenuBackdropName = "MenuImage";
@@ -101,12 +100,20 @@ namespace Ring.UI
         private Button fullScreenButton;
 
         [SerializeField]
+        [Tooltip("设置按钮（场景里名为 Setting）；留空时按名字自动找。")]
+        private Button settingsButton;
+
+        [SerializeField]
+        [Tooltip("设置面板里的关闭按钮（名为 CloseSetting）；留空时按名字自动找。")]
+        private Button closeSettingsButton;
+
+        [SerializeField]
         [Tooltip("设置面板里的「键位调整」按钮（场景里名为 Input，挂在 TopCanvas/SettingPanel 下）；留空时按名字自动找。")]
         private Button inputButton;
 
         [SerializeField]
-        [Tooltip("可选：游戏内键位调整面板，由用户在场景里手工搭建后拖入；留空时编辑器下打开菜单「钟声/输入映射/改键面板」。")]
-        private GameObject keyBindingPanel;
+        [Tooltip("可选：游戏内键位调整面板。留空时运行时自动搭一个（挂在 TopCanvas 下），不需要在场景里手搭。")]
+        private KeyBindingPanel keyBindingPanel;
 
         [SerializeField]
         [Tooltip("全屏按钮上的文字，会跟着全屏状态改；留空时取按钮下的第一个 Text。")]
@@ -253,7 +260,16 @@ namespace Ring.UI
 
         private void Update()
         {
-            HandleSettingsHotkey();
+            // 场景里的「设置 / x」按钮有可能自带持久绑定直接切 SetActive，先把开关状态对齐，
+            // 否则 Esc 会以为面板没开、一直往「打开」那条路上走。
+            SyncSettingsState();
+
+            // 改键面板开着时，Esc 归它（先取消捕捉、再关面板），不能同时当成「打开设置」。
+            bool consumedByKeyBindings = keyBindingPanel != null && keyBindingPanel.IsOpen && keyBindingPanel.TickInput();
+            if (!consumedByKeyBindings)
+            {
+                HandleSettingsHotkey();
+            }
 
             if (gameFlow == null)
             {
@@ -546,6 +562,16 @@ namespace Ring.UI
 
             // 「键位调整」按钮挂在 TopCanvas/SettingPanel 下，不在 MainMenu Canvas 的子树里，
             // 所以先从设置面板找，再回退到主菜单与全场景（名字大小写不敏感）。
+            if (settingsButton == null)
+            {
+                settingsButton = FindComponent<Button>(root, SettingsButtonName);
+            }
+
+            if (closeSettingsButton == null && settingsPanel != null)
+            {
+                closeSettingsButton = FindComponent<Button>(settingsPanel.transform, CloseSettingsButtonName);
+            }
+
             if (inputButton == null)
             {
                 inputButton = FindInputButton(root, settingsPanel);
@@ -553,7 +579,7 @@ namespace Ring.UI
 
             if (keyBindingPanel == null)
             {
-                keyBindingPanel = FindGameObjectAnywhere(KeyBindingPanelName);
+                keyBindingPanel = FindObjectOfType<KeyBindingPanel>(true);
             }
 
             if (volumeSlider == null)
@@ -629,6 +655,8 @@ namespace Ring.UI
             Bind(startButton, "开始游戏", HandleStartClicked);
             Bind(exitButton, "退出游戏", HandleExitClicked);
             Bind(fullScreenButton, "全屏", HandleFullScreenClicked);
+            Bind(settingsButton, "设置", HandleSettingsClicked);
+            Bind(closeSettingsButton, "关闭设置", HideSettings);
             Bind(inputButton, "键位调整", HandleInputClicked);
         }
 
@@ -636,7 +664,7 @@ namespace Ring.UI
         {
             if (button == null)
             {
-                Debug.LogWarning("[界面] 主菜单里找不到「" + label + "」按钮，这个功能不可用。", this);
+                Debug.LogWarning("[界面] 找不到「" + label + "」按钮，这个功能不可用（检查场景里的物体名字）。", this);
                 return;
             }
 
@@ -664,6 +692,7 @@ namespace Ring.UI
             }
 
             HideSettings();
+            CloseKeyBindings();
             RefreshFullScreenLabel();
         }
 
@@ -778,26 +807,69 @@ namespace Ring.UI
                 Debug.Log("[界面] 点击键位调整。", this);
             }
 
-            // 用户手搭的游戏内键位面板优先：有就切换显隐，代码不创建任何 UI 物体。
-            if (keyBindingPanel != null)
+            EnsureKeyBindingPanel();
+            if (keyBindingPanel == null)
             {
-                keyBindingPanel.SetActive(!keyBindingPanel.activeSelf);
+                Debug.LogWarning(
+                    "[界面] 找不到可用来挂键位面板的 Canvas（TopCanvas / MainMenu），键位调整打不开。",
+                    this);
                 return;
             }
 
-#if UNITY_EDITOR
-            // 面板还没搭时，退到工程自带的编辑器改键窗口（菜单「钟声/输入映射/改键面板」）。
-            if (!EditorApplication.ExecuteMenuItem("钟声/输入映射/改键面板"))
+            // 按钮是「开/关」切换：开着再点一次就收起。
+            if (keyBindingPanel.IsOpen)
             {
-                Debug.LogWarning(
-                    "[界面] 找不到菜单「钟声/输入映射/改键面板」。请把键位调整面板拖进 GameUiController 的 Key Binding Panel 槽。",
-                    this);
+                keyBindingPanel.Close();
+                return;
             }
-#else
-            Debug.LogWarning(
-                "[界面] 游戏内键位调整面板尚未搭建：请把面板拖进 GameUiController 的 Key Binding Panel 槽。",
-                this);
-#endif
+
+            keyBindingPanel.Open();
+        }
+
+        /// <summary>
+        /// 键位调整面板是纯代码搭的，场景里不需要手搭：先按类型在场景里找，
+        /// 找不到就在 TopCanvas 下现搭一个（TopCanvas 缺失时退到主菜单 Canvas）。
+        /// </summary>
+        private void EnsureKeyBindingPanel()
+        {
+            if (keyBindingPanel != null)
+            {
+                return;
+            }
+
+            keyBindingPanel = FindObjectOfType<KeyBindingPanel>(true);
+            if (keyBindingPanel != null)
+            {
+                return;
+            }
+
+            Transform parent = topCanvas != null
+                ? topCanvas.transform
+                : mainMenuCanvas != null ? mainMenuCanvas.transform : null;
+            if (parent == null)
+            {
+                return;
+            }
+
+            if (topCanvas != null)
+            {
+                EnsureTopCanvasOnTop();
+            }
+
+            keyBindingPanel = KeyBindingPanel.Create(parent);
+            if (logUi)
+            {
+                Debug.Log("[界面] 运行时搭好了键位调整面板（挂在 " + parent.name + " 下）。", this);
+            }
+        }
+
+        /// <summary>收起键位面板（开局 / 回主菜单 / 收设置时顺手关掉，免得暂停残留在别处）。</summary>
+        private void CloseKeyBindings()
+        {
+            if (keyBindingPanel != null && keyBindingPanel.IsOpen)
+            {
+                keyBindingPanel.Close();
+            }
         }
 
         private void HandleFullScreenClicked()
@@ -852,6 +924,52 @@ namespace Ring.UI
         }
 
         // ---------- 设置面板 ----------
+
+        /// <summary>界面上的「设置」按钮：开着就收，关着就开。</summary>
+        private void HandleSettingsClicked()
+        {
+            if (settingsOpen)
+            {
+                HideSettings();
+            }
+            else
+            {
+                ShowSettings();
+            }
+        }
+
+        /// <summary>
+        /// 把 settingsOpen 跟场景里 SettingPanel 的真实显隐对齐。
+        /// 设置面板可能被「设置 / x」按钮上的持久 onClick 直接开关，绕过了本脚本的 ShowSettings / HideSettings；
+        /// 不对齐的话，Esc 会误判成「面板还关着」而不去关闭，暂停状态也会漏掉。
+        /// </summary>
+        private void SyncSettingsState()
+        {
+            if (settingsPanel == null)
+            {
+                return;
+            }
+
+            bool active = settingsPanel.activeSelf;
+            if (active == settingsOpen)
+            {
+                return;
+            }
+
+            if (active)
+            {
+                settingsOpen = true;
+                EnsureTopCanvasOnTop();
+                RefreshFullScreenLabel();
+                ApplyPause();
+            }
+            else
+            {
+                settingsOpen = false;
+                CloseKeyBindings();
+                ClearPause();
+            }
+        }
 
         /// <summary>Esc / 暂停键：关着的则打开（主菜单除外），开着的则收起。</summary>
         private void HandleSettingsHotkey()
@@ -914,6 +1032,9 @@ namespace Ring.UI
             {
                 settingsPanel.SetActive(false);
             }
+
+            // 设置面板收起时，从它打开的键位面板也一起收起，避免「设置关了改键面板还悬着」。
+            CloseKeyBindings();
 
             // 只收起面板自身。TopCanvas 是常驻置顶的顶层容器，不随设置面板开合而隐藏或还原层级，
             // 否则它下面的结算 / 改键等其它顶层界面会一起被关掉。
@@ -1330,22 +1451,6 @@ namespace Ring.UI
                 if (string.Equals(buttons[i].name, name, System.StringComparison.OrdinalIgnoreCase))
                 {
                     return buttons[i];
-                }
-            }
-
-            return null;
-        }
-
-        /// <summary>全场景按名字找 GameObject（含未激活物体）；给可选的手工面板留一个按名兜底。</summary>
-        private static GameObject FindGameObjectAnywhere(string name)
-        {
-            Transform[] all = FindObjectsByType<Transform>(FindObjectsInactive.Include);
-            for (int i = 0; i < all.Length; i++)
-            {
-                if (all[i] != null
-                    && string.Equals(all[i].name, name, System.StringComparison.OrdinalIgnoreCase))
-                {
-                    return all[i].gameObject;
                 }
             }
 

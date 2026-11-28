@@ -26,6 +26,10 @@ namespace Ring.Flow
         [SerializeField] private bool enableJump = true;
         [SerializeField] private bool logActionInputs;
 
+        [Header("键位口径（横版地面）")]
+        [Tooltip("开：W 与 Space 一样触发跳跃；S 不产生任何推进（角色只能在地面左右移动）。关：只认 Jump 键。")]
+        [SerializeField] private bool moveUpAlsoJumps = true;
+
         private CharacterInstance instance;
         private CombatBody body;
         private SwordsmanSpriteAnimation spriteAnimation;
@@ -40,7 +44,12 @@ namespace Ring.Flow
         {
             instance = GetComponent<CharacterInstance>();
             body = GetComponent<CombatBody>();
-            body.ConfigureArena(arenaCenter, clampToArena, arenaRadius, unitsPerCell);
+            // 横版口径：可走区间来自 Inspector 的圆形外接矩形，竖向由 CombatBody 锁定在地面线上。
+            // 地面线先取出生的世界高度，避免生成后第一帧被拉回收起；落位层随后会用真实地图覆盖。
+            body.ConfigureArenaRect(
+                new Vector2(arenaCenter.x - arenaRadius, arenaCenter.y - arenaRadius),
+                new Vector2(arenaCenter.x + arenaRadius, arenaCenter.y + arenaRadius),
+                unitsPerCell, transform.position.y);
             body.SetActionEnabled(enableDodge, enableJump);
         }
 
@@ -58,8 +67,10 @@ namespace Ring.Flow
                 return;
             }
 
+            // 横版地面：只取水平分量。W/S 不再产生推进（S 完全无功能，W 改为跳跃）。
+            // 竖向移动由 CombatBody 的地面锁定兜底，这里不把 W/S 传给运动体，避免「按住 W 一直往上飘」。
             Vector2 axis = input.MoveAxis;
-            Vec2 move = new Vec2(axis.x, axis.y);
+            Vec2 move = new Vec2(axis.x, 0f);
             // 攻击动画期间保留施放时锁定的朝向，避免移动输入把 SpriteRenderer.flipX 改回去。
             bool actionPlaying = (SpriteAnimation != null && SpriteAnimation.IsActing)
                                  || (StrongmanAnimation != null && StrongmanAnimation.IsActing)
@@ -83,7 +94,11 @@ namespace Ring.Flow
                 }
             }
 
-            if (input.JumpPressed && body.RequestJump())
+            // W 与 Space 同为跳跃键；W 走 MoveUp 动作的按下沿，按住不会连跳。
+            bool jumpPressed = input.JumpPressed
+                               || (moveUpAlsoJumps && input.WasPressed(InputActionId.MoveUp));
+
+            if (jumpPressed && body.RequestJump())
             {
                 // 跳跃分镜显式绑定：与 SetMoving / PlayPunch / PlayDash 一样由输入适配层驱动。
                 // 力士有 Jump_00~07、游侠有 Jump_00~05；剑士与斯巴达没有跳跃序列帧，保持当前帧。
@@ -97,10 +112,10 @@ namespace Ring.Flow
                 RangerAnimation?.PlayJump();
             }
 
-            if (logActionInputs && (input.DodgePressed || input.JumpPressed))
+            if (logActionInputs && (input.DodgePressed || jumpPressed))
             {
                 Debug.Log("[" + instance.DisplayName + "] 输入 闪避=" + input.DodgePressed
-                          + " 跳跃=" + input.JumpPressed, this);
+                          + " 跳跃=" + jumpPressed, this);
             }
         }
 

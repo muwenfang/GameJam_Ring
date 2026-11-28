@@ -1,10 +1,11 @@
+﻿using Ring.Abilities;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace Ring.UI
 {
     /// <summary>
-    /// 用代码搭一套战斗 HUD 的默认布局（左右血条 + 状态栏、中间倒计时与回合数）。
+    /// 用代码搭一套战斗 HUD 的默认布局（左右血条 + 五个能力槽、中间倒计时与回合数）。
     ///
     /// 用途有两个：
     /// 1）场景里没有 HUD 时，<see cref="GameUiController"/> 在运行时兜底搭一套，保证「点开始就有界面」；
@@ -25,6 +26,12 @@ namespace Ring.UI
         private const float TraitBoxHeight = 84f;
         private const float TraitBoxTop = 78f;
         private const float BadgeSize = 112f;
+
+        /// <summary>单个能力槽格：宽 112、高 58（上行槽位名 13、下行人设名 20）。5 格 + 4 间距 = 592，塞得进 796 的槽位行。</summary>
+        private const float SlotChipWidth = 112f;
+        private const float SlotChipHeight = 58f;
+        private const int SlotCaptionFontSize = 13;
+        private const int SlotValueFontSize = 20;
 
         /// <summary>中间倒计时那一列的顶边距屏幕顶的距离。</summary>
         private const float CenterTopInset = 8f;
@@ -126,7 +133,7 @@ namespace Ring.UI
                 bar, prefix + "BarValue", string.Empty, 20, Color.white, TextAnchor.MiddleCenter,
                 Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
 
-            // 特性栏（虚线框 + 一排小标签）
+            // 技能槽（虚线框 + 五格：特质 / 普攻 / 本我 / 自我 / 超我 → 对应人设名）
             RectTransform box = CreateRect(
                 side, prefix + "TraitBox",
                 new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f),
@@ -150,6 +157,11 @@ namespace Ring.UI
             layout.childForceExpandWidth = false;
             layout.childForceExpandHeight = false;
             layout.padding = new RectOffset(0, 0, 0, 0);
+
+            for (int i = 0; i < AbilitySlots.Count; i++)
+            {
+                BuildSlotChip(row, i);
+            }
 
             Text empty = CreateText(
                 box, prefix + "TraitEmpty", "状态栏", 18,
@@ -178,6 +190,34 @@ namespace Ring.UI
                 parts.opponentTraitRow = row;
                 parts.opponentTraitEmpty = empty;
             }
+        }
+
+        /// <summary>一个两行式槽格：上行槽位名（特质 / 普攻 / 本我 / 自我 / 超我），下行人设名。</summary>
+        private static void BuildSlotChip(RectTransform row, int index)
+        {
+            RectTransform slot = UiBuilder.CreateRect(row, "Slot_" + index);
+            slot.sizeDelta = new Vector2(SlotChipWidth, SlotChipHeight);
+
+            var image = slot.gameObject.AddComponent<Image>();
+            image.color = new Color(0.55f, 0.60f, 0.68f, 0.22f);
+            image.raycastTarget = false;
+
+            CreateText(
+                slot, "Caption", AbilitySlots.All[index].ToDisplayName(), SlotCaptionFontSize,
+                new Color(0.80f, 0.84f, 0.90f, 0.55f), TextAnchor.UpperCenter,
+                new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f),
+                new Vector2(0f, -3f), new Vector2(-6f, SlotCaptionFontSize + 4f));
+
+            Text value = CreateText(
+                slot, "Label", "—", SlotValueFontSize,
+                new Color(0.10f, 0.13f, 0.17f, 1f), TextAnchor.MiddleCenter,
+                Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+
+            var valueRect = (RectTransform)value.transform;
+            valueRect.offsetMin = new Vector2(3f, 2f);
+            valueRect.offsetMax = new Vector2(-3f, -(SlotCaptionFontSize + 7f));
+
+            slot.gameObject.SetActive(false);
         }
 
         // ---------- 中间 ----------

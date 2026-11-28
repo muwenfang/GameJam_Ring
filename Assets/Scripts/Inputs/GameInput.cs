@@ -76,6 +76,9 @@ namespace Ring.Inputs
 
         private bool keyCodesDirty = true;
 
+        // 界面压住游戏输入的层数（改键面板等）。大于 0 时 Poll 直接跳过。
+        private int gameplaySuspensions;
+
         // 每帧重算的输入意图快照（D3：玩家与 AI 同构的唯一入口）。
         private InputIntent intent;
 
@@ -206,6 +209,38 @@ namespace Ring.Inputs
         /// <summary>暂停是否在本帧按下。</summary>
         public bool PausePressed => WasPressed(InputActionId.Pause);
 
+        /// <summary>当前是否被界面压住了游戏输入（改键面板等）。</summary>
+        public bool GameplayInputSuspended => gameplaySuspensions > 0;
+
+        /// <summary>
+        /// 暂时屏蔽游戏内动作（移动/攻击/技能/暂停）。给改键面板这类「按键只属于界面」的时刻用；
+        /// 可多层压栈，每次 Push 都要有一次 Pop 对应。屏蔽期间所有边沿与按住状态都读成 false，
+        /// 已经在按的动作会补发一次 Released，避免外层逻辑卡在「一直按住」。
+        /// </summary>
+        public void PushGameplaySuspension()
+        {
+            gameplaySuspensions++;
+            if (gameplaySuspensions == 1)
+            {
+                ReleaseAllHeld();
+            }
+        }
+
+        /// <summary>解除一层输入屏蔽，计数归零时再清一次残留状态。</summary>
+        public void PopGameplaySuspension()
+        {
+            if (gameplaySuspensions <= 0)
+            {
+                return;
+            }
+
+            gameplaySuspensions--;
+            if (gameplaySuspensions == 0)
+            {
+                ReleaseAllHeld();
+            }
+        }
+
         private void Awake()
         {
             if (Instance != null && Instance != this)
@@ -254,6 +289,14 @@ namespace Ring.Inputs
             // 顺序固定：先按键轮询，再组装本帧意图，保证 Intent 里的边沿信号与
             // AttackPressed / SkillPressed 等属性读到的是同一帧状态。
             Poll();
+            if (gameplaySuspensions > 0)
+            {
+                // 界面在吃按键（改键面板）：本帧意图清空，别让上一帧的移动/施法继续生效。
+                intent = default;
+                IntentUpdated?.Invoke(intent);
+                return;
+            }
+
             BuildIntent();
         }
 
@@ -435,6 +478,20 @@ namespace Ring.Inputs
             {
                 lastLoadError = error;
                 Debug.LogWarning("[Ring.Inputs] 本地按键映射解析失败，已回退到默认键位：" + error, this);
+                return false;
+            }
+
+            // 存档可能是改键面板误操作 / 手工改坏的：出现 Error 级问题（同一键绑给多个动作、
+            // 关键动作没绑键）时直接丢弃并清档，回退到设计默认键位。
+            // 否则会出现「W 被绑成跳跃、S 无绑定」这类串位，且现象与物理 bug 极难区分。
+            var report = new ValidationReport();
+            loaded.CollectIssues(report);
+            if (report.HasErrors)
+            {
+                lastLoadError = "本地按键映射存在冲突或缺失，已回退到默认键位：" + report.ToText();
+                Debug.LogWarning("[Ring.Inputs] " + lastLoadError, this);
+                PlayerPrefs.DeleteKey(InputBindingSerializer.PlayerPrefsKey);
+                PlayerPrefs.Save();
                 return false;
             }
 
@@ -630,6 +687,12 @@ namespace Ring.Inputs
 
         private void Poll()
         {
+            if (gameplaySuspensions > 0)
+            {
+                // 界面正在吃按键（改键面板），这一帧不产生任何游戏动作。
+                return;
+            }
+
             for (int i = 0; i < InputActions.Count; i++)
             {
                 bool anyHeld = false;
@@ -681,6 +744,21 @@ namespace Ring.Inputs
                 {
                     ActionReleased?.Invoke(action);
                 }
+            }
+        }
+
+        private void ReleaseAllHeld()
+        {
+            for (int i = 0; i < InputActions.Count; i++)
+            {
+                if (held[i])
+                {
+                    ActionReleased?.Invoke((InputActionId)i);
+                }
+
+                held[i] = false;
+                pressed[i] = false;
+                released[i] = false;
             }
         }
 

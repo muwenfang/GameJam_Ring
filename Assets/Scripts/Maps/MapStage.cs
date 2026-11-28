@@ -61,6 +61,23 @@ namespace Ring.Maps
             get { return Mathf.Max(0.01f, (WorldRect.yMax - GroundSurfaceY) * 0.5f); }
         }
 
+        /// <summary>
+        /// 可玩矩形的左下角（世界坐标），横向边界取背景矩形左右边。
+        ///
+        /// 竖向只剩「向下留白」的语义：角色由 <c>CombatBody</c> 锁定在 <see cref="GroundSurfaceY"/>
+        /// 这条地面线上左右移动（2026-11-28 策划确认），竖向边界不再参与角色移动。
+        /// </summary>
+        public Vector2 PlayableRectMin
+        {
+            get { return new Vector2(WorldRect.xMin, WorldRect.yMin); }
+        }
+
+        /// <summary>矩形可玩区右上角（世界坐标）。</summary>
+        public Vector2 PlayableRectMax
+        {
+            get { return new Vector2(WorldRect.xMax, WorldRect.yMax); }
+        }
+
         /// <summary>格坐标（可以是小数格）→ 世界坐标。</summary>
         public Vector3 CellToWorld(float col, float row)
         {

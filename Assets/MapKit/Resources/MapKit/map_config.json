@@ -8,13 +8,13 @@
   },
   "bamboo": {
     "darknessAlpha": 0.99,
-    "flashSeconds": 0.3,
+    "flashSeconds": 0.6,
     "intervalSeconds": {
-      "min": 0.8,
-      "max": 1.2
+      "min": 1.6,
+      "max": 2.4
     },
-    "extraCheckEvery": 1,
-    "extraChance": 0.5,
+    "extraCheckEvery": 1.4,
+    "extraChance": 0.22,
     "damageChance": 0.02,
     "damage": 40,
     "stunSeconds": 1,

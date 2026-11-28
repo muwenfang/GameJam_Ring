@@ -55,14 +55,16 @@ namespace Ring.UI
     }
 
     /// <summary>
-    /// 战斗 HUD：玩家 / 对手血条 + 双方特性栏 + 中央钟声倒计时与回合数。
+    /// 战斗 HUD：玩家 / 对手血条 + 双方「五个能力槽」 + 中央钟声倒计时与回合数。
     ///
     /// 设计约定（与设计稿一致）：
-    /// - 左右各一块：名字在血条上方、血条居中、血条下方是虚线「状态栏」框，用来展示已经拿到的特质；
+    /// - 左右各一块：名字在血条上方、血条居中、血条下方是虚线「技能槽」框，固定 5 格，
+    ///   按 <see cref="AbilitySlots.All"/> 的顺序显示 **特质 / 普攻 / 本我 / 自我 / 超我**
+    ///   各自装的是**哪个人设**（例：`特质 剑客`、`本我 钟表师`），空格只显示槽位名；
     /// - 中间一块：圆角底牌里是「距离下一次钟声还有几秒」，下面一行是「回合 X / Y」。
     ///
     /// 三层分工：
-    /// - 本组件只管读（GameFlow → CharacterInstance → 血量 / 特性）和摆字，
+    /// - 本组件只管读（GameFlow → CharacterInstance.Loadout → 五个槽的人设名）和摆字，
     ///   不改钟声规则、不改数值、不生成角色；
     /// - 位置与尺寸全部来自 RectTransform，用户在场景里怎么摆就怎么显示；
     /// - 圆角 / 虚线贴图在运行时按实际像素尺寸生成（见 <see cref="HudSprites"/>），
@@ -76,6 +78,7 @@ namespace Ring.UI
     public sealed class BattleHud : MonoBehaviour
     {
         // ---------- 名字约定：留空的引用按这些名字在子物体里找 ----------
+        // 槽位行保留了旧名 TraitRow，同时接受新名 SkillRow（两种都能自动找到）。
         private const string PlayerNameName = "PlayerName";
         private const string PlayerBarName = "PlayerBar";
         private const string PlayerBarBorderName = "PlayerBarBorder";
@@ -83,6 +86,7 @@ namespace Ring.UI
         private const string PlayerBarValueName = "PlayerBarValue";
         private const string PlayerTraitBoxName = "PlayerTraitBox";
         private const string PlayerTraitRowName = "PlayerTraitRow";
+        private const string PlayerSlotRowAliasName = "PlayerSkillRow";
         private const string PlayerTraitEmptyName = "PlayerTraitEmpty";
 
         private const string OpponentNameName = "OpponentName";
@@ -92,6 +96,7 @@ namespace Ring.UI
         private const string OpponentBarValueName = "OpponentBarValue";
         private const string OpponentTraitBoxName = "OpponentTraitBox";
         private const string OpponentTraitRowName = "OpponentTraitRow";
+        private const string OpponentSlotRowAliasName = "OpponentSkillRow";
         private const string OpponentTraitEmptyName = "OpponentTraitEmpty";
 
         private const string BellBadgeName = "BellBadge";
@@ -119,7 +124,7 @@ namespace Ring.UI
 
         [Header("文案")]
         [SerializeField]
-        [Tooltip("特性栏为空时的占位文案（设计稿写的是「状态栏」）。")]
+        [Tooltip("一个槽都没到手时的占位文案（设计稿写的是「状态栏」）；正常对局里 5 个槽位总会显示槽位名。")]
         private string traitBoxEmptyText = "状态栏";
 
 
@@ -135,7 +140,7 @@ namespace Ring.UI
         [Tooltip("左下角是否显示明细（阶段 / 在场人数 / 技能冷却）。默认关，开出来当调试信息用。")]
         private bool showDetails;
 
-        [Header("引用：玩家一侧（留空按名字自动找）")]
+        [Header("引用：玩家一侧（留空按名字自动找；槽位行也叫 PlayerSkillRow）")]
         [SerializeField] private Text playerName;
         [SerializeField] private Image playerBar;
         [SerializeField] private Image playerBarBorder;
@@ -145,7 +150,7 @@ namespace Ring.UI
         [SerializeField] private RectTransform playerTraitRow;
         [SerializeField] private Text playerTraitEmpty;
 
-        [Header("引用：对手一侧（留空按名字自动找）")]
+        [Header("引用：对手一侧（留空按名字自动找；槽位行也叫 OpponentSkillRow）")]
         [SerializeField] private Text opponentName;
         [SerializeField] private Image opponentBar;
         [SerializeField] private Image opponentBarBorder;
@@ -162,15 +167,43 @@ namespace Ring.UI
         [SerializeField] private Text roundValue;
         [SerializeField] private Text detailLabel;
 
-        [Header("布局")]
+        [Header("布局：五个能力槽")]
         [SerializeField]
-        [Tooltip("特性栏最多放几个小标签；多出来的合并成「+N」。")]
-        private int maxTraitSlots = 4;
+        [Tooltip("补建槽格时的兜底宽度。手搭的槽格够 5 个时完全不看这里，新格子还会沿用相邻格子的实际尺寸。")]
+        private float traitSlotWidth = 112f;
 
-        [SerializeField] private float traitSlotWidth = 112f;
-        [SerializeField] private float traitSlotHeight = 32f;
-        [SerializeField] private int traitSlotFontSize = 17;
+        [SerializeField]
+        [Tooltip("补建「单行式」槽格时的兜底高度（与手搭格子同风格）。")]
+        private float traitSlotHeight = 32f;
+
+        [SerializeField]
+        [Tooltip("补建「单行式」槽格时的字号（`特质 剑客` 一行显示）。")]
+        private int traitSlotFontSize = 17;
+
         [SerializeField] private float traitSlotSpacing = 8f;
+
+        [SerializeField]
+        [Tooltip("补建「两行式」槽格时的兜底高度（上行槽位名、下行人设名）。")]
+        private float slotChipHeight = 58f;
+
+        [SerializeField]
+        [Tooltip("两行式槽格的上行（槽位名）字号。")]
+        private int slotCaptionFontSize = 13;
+
+        [SerializeField]
+        [Tooltip("两行式槽格的下行（人设名）字号。")]
+        private int slotValueFontSize = 20;
+
+        [SerializeField]
+        [Tooltip("槽格文字超宽时自动缩字号（以你在场景里设的字号为上限）。")]
+        private bool fitSlotText = true;
+
+        [SerializeField] private int fitSlotTextMinFontSize = 11;
+
+        [Header("文案：技能槽")]
+        [SerializeField]
+        [Tooltip("两行式槽格「没人设」时下行显示的占位文案；单行式格子只显示槽位名。")]
+        private string emptySlotValue = "—";
 
         [Header("外观")]
         [SerializeField]
@@ -198,6 +231,8 @@ namespace Ring.UI
         [SerializeField] private Color traitBoxBorderColor = new Color(0.85f, 0.88f, 0.93f, 0.55f);
         [SerializeField] private Color completeSetColor = new Color(0.92f, 0.80f, 0.42f, 0.95f);
         [SerializeField] private Color traitChipTextColor = new Color(0.10f, 0.13f, 0.17f, 1f);
+        [SerializeField] private Color emptySlotFillColor = new Color(0.55f, 0.60f, 0.68f, 0.22f);
+        [SerializeField] private Color emptySlotTextColor = new Color(0.80f, 0.84f, 0.90f, 0.55f);
         [SerializeField] private Color warnColor = new Color(0.94f, 0.42f, 0.32f, 1f);
 
         [SerializeField]
@@ -209,18 +244,27 @@ namespace Ring.UI
         private float healthSmoothing = 2.5f;
 
         // ---------- 运行时 ----------
-        private sealed class TraitRowView
+        /// <summary>一排技能槽的运行时引用。frames / labels / captions 三个列表按下标一一对应。</summary>
+        private sealed class SlotRowView
         {
             public Image box;
             public RectTransform row;
             public Text placeholder;
-            public readonly List<Image> frames = new List<Image>(4);
-            public readonly List<Text> labels = new List<Text>(4);
+
+            /// <summary>槽格底色（手搭没给 Image 时为 null，只靠文字显形）。</summary>
+            public readonly List<Image> frames = new List<Image>(AbilitySlots.Count);
+
+            /// <summary>人设名（单行式的唯一一行 / 两行式的下行）。</summary>
+            public readonly List<Text> labels = new List<Text>(AbilitySlots.Count);
+
+            /// <summary>槽位名（两行式的上行）；单行式格子为 null。</summary>
+            public readonly List<Text> captions = new List<Text>(AbilitySlots.Count);
+
             public string signature = string.Empty;
         }
 
-        private readonly TraitRowView playerRow = new TraitRowView();
-        private readonly TraitRowView opponentRow = new TraitRowView();
+        private readonly SlotRowView playerRow = new SlotRowView();
+        private readonly SlotRowView opponentRow = new SlotRowView();
 
         private CharacterInstance player;
         private CharacterInstance opponent;
@@ -284,11 +328,16 @@ namespace Ring.UI
             EnsureFontsIn(opponentRow);
         }
 
-        private static void EnsureFontsIn(TraitRowView view)
+        private static void EnsureFontsIn(SlotRowView view)
         {
             for (int i = 0; i < view.labels.Count; i++)
             {
                 EnsureFont(view.labels[i]);
+            }
+
+            for (int i = 0; i < view.captions.Count; i++)
+            {
+                EnsureFont(view.captions[i]);
             }
         }
 
@@ -358,6 +407,7 @@ namespace Ring.UI
             if (playerBarValue == null) playerBarValue = FindText(PlayerBarValueName);
             if (playerTraitBox == null) playerTraitBox = FindImage(PlayerTraitBoxName);
             if (playerTraitRow == null) playerTraitRow = FindRect(PlayerTraitRowName);
+            if (playerTraitRow == null) playerTraitRow = FindRect(PlayerSlotRowAliasName);
             if (playerTraitEmpty == null) playerTraitEmpty = FindText(PlayerTraitEmptyName);
 
             if (opponentName == null) opponentName = FindText(OpponentNameName);
@@ -367,6 +417,7 @@ namespace Ring.UI
             if (opponentBarValue == null) opponentBarValue = FindText(OpponentBarValueName);
             if (opponentTraitBox == null) opponentTraitBox = FindImage(OpponentTraitBoxName);
             if (opponentTraitRow == null) opponentTraitRow = FindRect(OpponentTraitRowName);
+            if (opponentTraitRow == null) opponentTraitRow = FindRect(OpponentSlotRowAliasName);
             if (opponentTraitEmpty == null) opponentTraitEmpty = FindText(OpponentTraitEmptyName);
 
             if (bellBadge == null) bellBadge = FindImage(BellBadgeName);
@@ -426,113 +477,223 @@ namespace Ring.UI
             return null;
         }
 
-        // ---------- 特性小标签 ----------
+        // ---------- 五个能力槽 ----------
 
-        /// <summary>特性栏里的槽位：已有子物体就当成用户手工搭好的槽直接接管，否则按 maxTraitSlots 生成。</summary>
         private void PrepareRows()
         {
-            PrepareRow(playerRow, true);
-            PrepareRow(opponentRow, false);
+            PrepareRow(playerRow);
+            PrepareRow(opponentRow);
         }
 
-        private void PrepareRow(TraitRowView view, bool playerSide)
+        /// <summary>
+        /// 把一排技能槽准备好。手搭的格子两种形态都认：
+        /// - 一个子物体只有 1 个 Text：**单行式**，显示「特质 剑客」；
+        /// - 一个子物体有 2 个 Text：**两行式**，第一个当槽位名（上行），第二个当人设名（下行）。
+        ///
+        /// 子物体不足 <see cref="AbilitySlots.Count"/>（5）个时按需补建，补出来的格子沿用第 0 格的
+        /// 尺寸与形态，保证和手搭的格子长得一样；一格都没有时才用 Inspector 上的兜底尺寸。
+        /// </summary>
+        private void PrepareRow(SlotRowView view)
         {
             if (view.row == null)
             {
                 return;
             }
 
-            if (view.frames.Count == 0 && view.row.childCount > 0)
+            if (view.frames.Count == 0)
             {
-                for (int i = 0; i < view.row.childCount; i++)
-                {
-                    Transform child = view.row.GetChild(i);
-                    Text label = child.GetComponentInChildren<Text>(true);
-                    if (label == null)
-                    {
-                        continue;
-                    }
-
-                    view.frames.Add(child.GetComponent<Image>());
-                    view.labels.Add(label);
-                }
-
-                if (view.frames.Count > 0)
-                {
-                    // 用户手搭的槽位：顺便把间距对齐到 Inspector 上的设置。
-                    var group = view.row.GetComponent<HorizontalLayoutGroup>();
-                    if (group != null)
-                    {
-                        group.spacing = traitSlotSpacing;
-                    }
-
-                    return;
-                }
+                CollectHandmadeSlots(view);
             }
 
-            if (view.frames.Count > 0)
+            // 形态跟随第一格：有槽位名 Text 就是两行式，否则单行式。
+            bool twoLine = view.captions.Count == 0 || view.captions[0] != null;
+            for (int i = view.frames.Count; i < AbilitySlots.Count; i++)
+            {
+                CreateSlotChip(view, i, twoLine);
+            }
+
+            if (!fitSlotText)
             {
                 return;
             }
 
-            int count = Mathf.Max(0, maxTraitSlots);
-            var generatedGroup = view.row.GetComponent<HorizontalLayoutGroup>();
-            if (generatedGroup != null)
+            for (int i = 0; i < view.labels.Count; i++)
             {
-                generatedGroup.spacing = traitSlotSpacing;
+                ApplySlotTextFit(view.labels[i]);
             }
 
-            Sprite chipSprite = HudSprites.RoundedFill(
-                Mathf.Max(2, Mathf.RoundToInt(traitSlotWidth)),
-                Mathf.Max(2, Mathf.RoundToInt(traitSlotHeight)),
-                Mathf.RoundToInt(Mathf.Min(cornerRadius, traitSlotHeight * 0.4f)));
-
-            for (int i = 0; i < count; i++)
+            for (int i = 0; i < view.captions.Count; i++)
             {
-                RectTransform slot = UiBuilder.CreateRect(view.row, "Trait_" + i);
-                slot.sizeDelta = new Vector2(traitSlotWidth, traitSlotHeight);
+                ApplySlotTextFit(view.captions[i]);
+            }
+        }
 
-                var image = slot.gameObject.AddComponent<Image>();
-                image.sprite = chipSprite;
-                image.raycastTarget = false;
+        /// <summary>把行里已有的子物体认成槽位（没有 Text 的子物体——比如纯装饰——会跳过并提示）。</summary>
+        private void CollectHandmadeSlots(SlotRowView view)
+        {
+            int skipped = 0;
+            for (int i = 0; i < view.row.childCount; i++)
+            {
+                Transform child = view.row.GetChild(i);
+                Text[] texts = child.GetComponentsInChildren<Text>(true);
+                if (texts.Length == 0)
+                {
+                    skipped++;
+                    continue;
+                }
 
-                Text label = UiBuilder.CreateText(
+                view.frames.Add(child.GetComponent<Image>());
+                if (texts.Length >= 2)
+                {
+                    view.captions.Add(texts[0]);
+                    view.labels.Add(texts[1]);
+                }
+                else
+                {
+                    view.captions.Add(null);
+                    view.labels.Add(texts[0]);
+                }
+            }
+
+            var group = view.row.GetComponent<HorizontalLayoutGroup>();
+            if (group != null)
+            {
+                group.spacing = traitSlotSpacing;
+            }
+
+            if (skipped > 0)
+            {
+                Debug.LogWarning(
+                    "[HUD] " + view.row.name + " 下有 " + skipped + " 个子物体没有 Text，已跳过；"
+                    + "槽位格需要 Image（底色）+ Text（槽位名 / 人设名）。", view.row);
+            }
+        }
+
+        /// <summary>补建一个槽位格。twoLine=true 时上「槽位名」下「人设名」，否则一行「特质 剑客」。</summary>
+        private void CreateSlotChip(SlotRowView view, int index, bool twoLine)
+        {
+            Vector2 size = ReferenceChipSize(view, twoLine);
+            RectTransform slot = UiBuilder.CreateRect(view.row, "Slot_" + index);
+            slot.sizeDelta = size;
+
+            var frame = slot.gameObject.AddComponent<Image>();
+            frame.raycastTarget = false;
+            frame.color = emptySlotFillColor;
+
+            if (autoGenerateSprites)
+            {
+                frame.sprite = HudSprites.RoundedFill(
+                    Mathf.Max(2, Mathf.RoundToInt(size.x)),
+                    Mathf.Max(2, Mathf.RoundToInt(size.y)),
+                    Mathf.RoundToInt(Mathf.Min(cornerRadius, size.y * 0.4f)));
+                frame.type = Image.Type.Simple;
+            }
+
+            Text caption = null;
+            Text label;
+
+            if (twoLine)
+            {
+                caption = UiBuilder.CreateText(
+                    slot, "Caption", string.Empty, slotCaptionFontSize, emptySlotTextColor,
+                    TextAnchor.UpperCenter, new Vector2(0.5f, 0.5f), Vector2.zero, size);
+                var captionRect = (RectTransform)caption.transform;
+                captionRect.anchorMin = new Vector2(0f, 1f);
+                captionRect.anchorMax = new Vector2(1f, 1f);
+                captionRect.pivot = new Vector2(0.5f, 1f);
+                captionRect.anchoredPosition = new Vector2(0f, -3f);
+                captionRect.sizeDelta = new Vector2(-6f, slotCaptionFontSize + 4f);
+
+                label = UiBuilder.CreateText(
+                    slot, "Label", string.Empty, slotValueFontSize, traitChipTextColor,
+                    TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f), Vector2.zero, size);
+                var labelRect = (RectTransform)label.transform;
+                labelRect.anchorMin = Vector2.zero;
+                labelRect.anchorMax = Vector2.one;
+                labelRect.pivot = new Vector2(0.5f, 0.5f);
+                labelRect.offsetMin = new Vector2(3f, 2f);
+                labelRect.offsetMax = new Vector2(-3f, -(slotCaptionFontSize + 7f));
+            }
+            else
+            {
+                label = UiBuilder.CreateText(
                     slot, "Label", string.Empty, traitSlotFontSize, traitChipTextColor,
-                    TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f), Vector2.zero,
-                    new Vector2(traitSlotWidth, traitSlotHeight));
+                    TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f), Vector2.zero, size);
                 UiBuilder.Stretch((RectTransform)label.transform);
-                label.horizontalOverflow = HorizontalWrapMode.Overflow;
                 label.rectTransform.offsetMin = new Vector2(4f, 0f);
                 label.rectTransform.offsetMax = new Vector2(-4f, 0f);
-
-                view.frames.Add(image);
-                view.labels.Add(label);
-                slot.gameObject.SetActive(false);
             }
+
+            label.raycastTarget = false;
+            view.frames.Add(frame);
+            view.captions.Add(caption);
+            view.labels.Add(label);
+            slot.gameObject.SetActive(false);
         }
 
-        /// <summary>把一侧的特性填进槽位；数量变化时才重建文字，避免每帧刷 UI。</summary>
-        private void FillTraitRow(TraitRowView view, CharacterInstance character, bool playerSide)
+        /// <summary>补建格子的尺寸：优先抄已有格子的 sizeDelta，没有才用 Inspector 兜底值。</summary>
+        private Vector2 ReferenceChipSize(SlotRowView view, bool twoLine)
+        {
+            if (view.frames.Count > 0)
+            {
+                RectTransform reference = null;
+                Image frame = view.frames[0];
+                if (frame != null)
+                {
+                    reference = frame.rectTransform;
+                }
+                else if (view.labels.Count > 0 && view.labels[0] != null)
+                {
+                    reference = view.labels[0].rectTransform;
+                }
+
+                if (reference != null)
+                {
+                    Vector2 size = reference.sizeDelta;
+                    if (size.x > 4f && size.y > 4f)
+                    {
+                        return size;
+                    }
+                }
+            }
+
+            return new Vector2(traitSlotWidth, twoLine ? slotChipHeight : traitSlotHeight);
+        }
+
+        /// <summary>文字超宽时自动缩字号；以 Text 当前字号为上限，不会把用户放大过的字又压回去。</summary>
+        private void ApplySlotTextFit(Text text)
+        {
+            if (text == null || text.resizeTextForBestFit)
+            {
+                return;
+            }
+
+            int max = Mathf.Max(1, text.fontSize);
+            int min = Mathf.Clamp(fitSlotTextMinFontSize, 1, max);
+            text.resizeTextForBestFit = true;
+            text.resizeTextMaxSize = max;
+            text.resizeTextMinSize = min;
+        }
+
+        /// <summary>
+        /// 把一侧的五个能力槽填满：每个槽显示「装的是哪个人设」，空格只显示槽位名。
+        /// 只在「槽内容变了」时重排文字，避免每帧刷 UI。
+        /// </summary>
+        private void FillSlotRow(SlotRowView view, CharacterInstance character, bool playerSide)
         {
             if (view.row == null)
             {
                 return;
             }
 
-            IReadOnlyList<TraitCard> traits = character != null && character.Participant != null
-                ? character.Participant.Traits
-                : null;
-
-            int count = traits != null ? traits.Count : 0;
-
-            // 集齐一套时整个框变金色；这个状态可能因为抢牌/被抢而变，所以每次刷新都重设颜色。
+            // 集齐一套时整框变金色；这个状态可能因为抢牌 / 被抢而变，所以每次都重设颜色。
             if (view.box != null)
             {
                 bool complete = character != null && character.HasCompleteSet;
                 view.box.color = complete ? completeSetColor : traitBoxBorderColor;
             }
 
-            string signature = BuildTraitSignature(traits, count);
+            string signature = BuildSlotSignature(character);
             if (signature == view.signature)
             {
                 return;
@@ -540,40 +701,81 @@ namespace Ring.UI
 
             view.signature = signature;
 
+            AbilityLoadout loadout = character != null ? character.Loadout : null;
+            bool usable = loadout != null && !loadout.IsEmpty;
+
+            // 还没生成角色：整排收起，退回占位文案，避免一排空框显得像坏了。
+            // 有角色但某个槽空着：照常显示该槽的槽位名（灰色），玩家能看出「这里还缺一张」。
             if (view.placeholder != null)
             {
-                view.placeholder.gameObject.SetActive(count == 0);
+                view.placeholder.gameObject.SetActive(character == null);
                 view.placeholder.text = traitBoxEmptyText;
             }
 
-            int slots = view.frames.Count;
-            for (int i = 0; i < slots; i++)
+            int count = Mathf.Min(view.frames.Count, AbilitySlots.Count);
+            for (int i = 0; i < view.frames.Count; i++)
             {
-                bool used = i < count || (slots > 0 && count > slots && i == slots - 1);
                 GameObject go = SlotObject(view, i);
+                bool shown = character != null && i < count;
                 if (go != null)
                 {
-                    go.SetActive(used);
+                    go.SetActive(shown);
                 }
 
-                if (!used || go == null)
+                if (!shown)
                 {
                     continue;
                 }
 
-                if (i == slots - 1 && count > slots)
-                {
-                    SetSlot(view, i, "+" + (count - slots + 1), new Color(0.86f, 0.88f, 0.92f, 0.95f));
-                    continue;
-                }
+                AbilitySlot slot = AbilitySlots.All[i];
+                AbilityCard card = default;
+                int extraTraits = 0;
+                bool filled = usable && TryGetDisplayCard(loadout, slot, out card, out extraTraits);
 
-                TraitCard card = traits[i];
-                Color tint = CharacterInstance.GetPersonaColor(card.Persona, playerSide);
-                SetSlot(view, i, PersonaIds.ToChineseName(card.Persona), tint);
+                string caption = slot.ToDisplayName();
+                string value = filled
+                    ? PersonaIds.ToChineseName(card.Persona) + (extraTraits > 0 ? "+" + extraTraits : string.Empty)
+                    : emptySlotValue;
+
+                SetSlot(
+                    view, i,
+                    filled ? CharacterInstance.GetPersonaColor(card.Persona, playerSide) : emptySlotFillColor,
+                    filled ? traitChipTextColor : emptySlotTextColor,
+                    caption, value, filled);
             }
         }
 
-        private static GameObject SlotObject(TraitRowView view, int index)
+        /// <summary>
+        /// 某个槽该显示哪张卡：技能槽直接取槽里的卡；特质槽可以囤多张，
+        /// 取**最后获得**的那张（与「形象跟随特质」一致），余下的显示成「+N」。
+        /// </summary>
+        private static bool TryGetDisplayCard(AbilityLoadout loadout, AbilitySlot slot, out AbilityCard card, out int extraTraits)
+        {
+            extraTraits = 0;
+            card = default;
+
+            if (loadout == null)
+            {
+                return false;
+            }
+
+            if (slot == AbilitySlot.Trait)
+            {
+                IReadOnlyList<AbilityCard> traits = loadout.GetTraitCards();
+                if (traits.Count == 0)
+                {
+                    return false;
+                }
+
+                card = traits[traits.Count - 1];
+                extraTraits = traits.Count - 1;
+                return true;
+            }
+
+            return loadout.TryGet(slot, out card);
+        }
+
+        private static GameObject SlotObject(SlotRowView view, int index)
         {
             if (index < 0 || index >= view.frames.Count)
             {
@@ -590,30 +792,54 @@ namespace Ring.UI
             return label != null ? label.gameObject : null;
         }
 
-        private static void SetSlot(TraitRowView view, int index, string text, Color tint)
+        private static void SetSlot(SlotRowView view, int index, Color fill, Color ink, string caption, string value, bool filled)
         {
-            if (index < view.labels.Count && view.labels[index] != null)
-            {
-                view.labels[index].text = text;
-            }
-
             if (index < view.frames.Count && view.frames[index] != null)
             {
-                view.frames[index].color = tint;
+                view.frames[index].color = fill;
+            }
+
+            Text captionLabel = index < view.captions.Count ? view.captions[index] : null;
+            Text valueLabel = index < view.labels.Count ? view.labels[index] : null;
+
+            if (captionLabel != null)
+            {
+                captionLabel.text = caption;
+                captionLabel.color = ink;
+                if (valueLabel != null)
+                {
+                    valueLabel.text = value;
+                    valueLabel.color = ink;
+                }
+
+                return;
+            }
+
+            if (valueLabel != null)
+            {
+                // 单行式：有内容时「特质 剑客」，空格只留槽位名。
+                valueLabel.text = filled ? caption + " " + value : caption;
+                valueLabel.color = ink;
             }
         }
 
-        private static string BuildTraitSignature(IReadOnlyList<TraitCard> traits, int count)
+        /// <summary>槽内容的指纹：任一槽的人设 / 附加特质数变了才重排。</summary>
+        private static string BuildSlotSignature(CharacterInstance character)
         {
-            if (count <= 0)
+            AbilityLoadout loadout = character != null ? character.Loadout : null;
+            if (loadout == null)
             {
-                return "0";
+                return "none";
             }
 
-            var builder = new StringBuilder(count * 6);
-            for (int i = 0; i < count; i++)
+            var builder = new StringBuilder(AbilitySlots.Count * 4);
+            for (int i = 0; i < AbilitySlots.Count; i++)
             {
-                builder.Append((int)traits[i].Persona).Append(',');
+                AbilityCard card;
+                int extraTraits;
+                bool filled = TryGetDisplayCard(loadout, AbilitySlots.All[i], out card, out extraTraits);
+                builder.Append(filled ? (int)card.Persona : -1);
+                builder.Append(filled ? extraTraits : 0).Append(',');
             }
 
             return builder.ToString();
@@ -667,8 +893,8 @@ namespace Ring.UI
             RefreshBar(playerBarFill, playerBarValue, player, true, false);
             RefreshBar(opponentBarFill, opponentBarValue, opponent, false, false);
 
-            FillTraitRow(playerRow, player, true);
-            FillTraitRow(opponentRow, opponent, false);
+            FillSlotRow(playerRow, player, true);
+            FillSlotRow(opponentRow, opponent, false);
 
             RefreshRound();
             RefreshDetail();
@@ -990,10 +1216,20 @@ namespace Ring.UI
             var builder = new StringBuilder();
             AppendSize(builder, playerBar);
             AppendSize(builder, playerTraitBox);
+            AppendChipSizes(builder, playerRow);
             AppendSize(builder, opponentBar);
             AppendSize(builder, opponentTraitBox);
+            AppendChipSizes(builder, opponentRow);
             AppendSize(builder, bellBadge);
             return builder.ToString();
+        }
+
+        private static void AppendChipSizes(StringBuilder builder, SlotRowView view)
+        {
+            for (int i = 0; i < view.frames.Count; i++)
+            {
+                AppendSize(builder, view.frames[i]);
+            }
         }
 
         private static void AppendSize(StringBuilder builder, Graphic graphic)
@@ -1025,6 +1261,9 @@ namespace Ring.UI
 
             ApplyBoxLook(playerTraitBox, radius, thickness);
             ApplyBoxLook(opponentTraitBox, radius, thickness);
+
+            ApplyChipLook(playerRow, radius);
+            ApplyChipLook(opponentRow, radius);
 
             if (bellBadge != null)
             {
@@ -1115,6 +1354,33 @@ namespace Ring.UI
             fill.fillMethod = Image.FillMethod.Horizontal;
             fill.fillOrigin = fillFromLeft ? (int)Image.OriginHorizontal.Left : (int)Image.OriginHorizontal.Right;
             fill.color = fillColor;
+        }
+
+        /// <summary>槽格底色也走圆角贴图（手搭的格子 sprite 为空时补上；自己指定过贴图的不动）。</summary>
+        private void ApplyChipLook(SlotRowView view, int radius)
+        {
+            for (int i = 0; i < view.frames.Count; i++)
+            {
+                Image frame = view.frames[i];
+                if (frame == null)
+                {
+                    continue;
+                }
+
+                Vector2 size = frame.rectTransform.rect.size;
+                int w = Mathf.RoundToInt(size.x);
+                int h = Mathf.RoundToInt(size.y);
+                if (w <= 4 || h <= 4)
+                {
+                    continue;
+                }
+
+                if (frame.sprite == null || HudSprites.IsGenerated(frame.sprite))
+                {
+                    frame.sprite = HudSprites.RoundedFill(w, h, Mathf.RoundToInt(Mathf.Min(radius, h * 0.4f)));
+                    frame.type = Image.Type.Simple;
+                }
+            }
         }
 
         private void ApplyBoxLook(Image box, int radius, int thickness)

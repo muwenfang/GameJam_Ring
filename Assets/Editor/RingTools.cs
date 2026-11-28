@@ -207,38 +207,57 @@ namespace Ring.EditorTools
                 CheckButton(report, menu.transform, "Exit", "退出游戏");
 
                 report.Info("主菜单", "Canvas 的 Sorting Order = " + menu.sortingOrder
-                    + "；运行时会新建 HUD Canvas（100），设置面板打开时抬到 300。");
-
-                GameObject settingsPanel = FindGameObject(menu.transform, "SettingPanel");
-                if (settingsPanel == null)
-                {
-                    report.Error("设置面板", "找不到 SettingPanel：设置 / 全屏都不可用。");
-                }
-                else
-                {
-                    if (settingsPanel.activeSelf)
-                    {
-                        report.Info("设置面板", "场景里是开着存的；GameUiController 会在运行时先收起来。");
-                    }
-
-                    CheckButton(report, settingsPanel.transform, "FullScreen", "全屏");
-                    CheckButton(report, settingsPanel.transform, "CloseSetting", "关闭设置");
-
-                    if (FindComponent<Slider>(settingsPanel.transform, "AudioSlider") == null)
-                    {
-                        report.Warn("设置面板", "找不到 AudioSlider：音量滑条不会生效。");
-                    }
-
-                    Text fullScreenLabel = FindComponent<Text>(settingsPanel.transform, "Label");
-                    if (fullScreenLabel != null && fullScreenLabel.text != "全屏")
-                    {
-                        report.Info("设置面板", "全屏按钮现在写的是「" + fullScreenLabel.text + "」，运行时会按全屏状态改成「全屏 / 退出全屏」。");
-                    }
-                }
-
-                CheckBackdrop(report, menu.transform, "MenuImage", "它铺满全屏");
-                CheckBackdrop(report, menu.transform, "SettingImage", "它的绘制顺序在全屏按钮之前");
+                    + "；运行时层级从低到高：战斗画布 / MainMenu(0) → HudCanvas(90) → RingCanvas(100) → TopCanvas(1000)。");
             }
+
+            Canvas top = FindRootCanvas("TopCanvas");
+            if (top == null)
+            {
+                report.Error("顶层画布", "找不到名为 TopCanvas 的根 Canvas：设置 / 结算 / 改键这些该盖住一切的面板没有安放处。");
+            }
+            else if (!top.gameObject.activeSelf)
+            {
+                report.Info("顶层画布", "场景里是关着存的；GameUiController 运行时会强制激活并置顶（Sorting Order = 1000）。");
+            }
+            else
+            {
+                report.Info("顶层画布", "Sorting Order = " + top.sortingOrder + "，运行时会被强制设为 1000。");
+            }
+
+            Transform settingsRoot = top != null ? top.transform : (menu != null ? menu.transform : null);
+            GameObject settingsPanel = settingsRoot != null ? FindGameObject(settingsRoot, "SettingPanel") : null;
+            if (settingsPanel == null)
+            {
+                report.Error("设置面板", "找不到 SettingPanel（TopCanvas 下）：设置 / 全屏 / 键位调整都不可用。");
+            }
+            else
+            {
+                if (settingsPanel.activeSelf)
+                {
+                    report.Info("设置面板", "场景里是开着存的；GameUiController 会在运行时先收起来。");
+                }
+
+                CheckButton(report, settingsPanel.transform, "FullScreen", "全屏");
+                CheckButton(report, settingsPanel.transform, "CloseSetting", "关闭设置");
+                CheckButton(report, settingsPanel.transform, "Input", "键位调整");
+
+                if (FindComponent<Slider>(settingsPanel.transform, "AudioSlider") == null)
+                {
+                    report.Warn("设置面板", "找不到 AudioSlider：音量滑条不会生效。");
+                }
+
+                Button fullScreen = FindComponent<Button>(settingsPanel.transform, "FullScreen");
+                Text fullScreenLabel = fullScreen != null ? FindComponent<Text>(fullScreen.transform, "Label") : null;
+                if (fullScreenLabel != null && fullScreenLabel.text != "全屏")
+                {
+                    report.Info("设置面板", "全屏按钮现在写的是「" + fullScreenLabel.text + "」，运行时会按全屏状态改成「全屏 / 退出全屏」。");
+                }
+
+                report.Info("键位面板", "游戏内改键面板由 KeyBindingPanel 在运行时搭到 TopCanvas 下（玩家点「键位调整」才出现），场景里不用手搭。");
+                CheckBackdrop(report, settingsPanel.transform, "SettingImage", "它的绘制顺序在按钮之前");
+            }
+
+            CheckBackdrop(report, menu != null ? menu.transform : null, "MenuImage", "它铺满全屏");
 
             if (Object.FindObjectOfType<GameFlow>(true) == null)
             {
@@ -377,14 +396,19 @@ namespace Ring.EditorTools
         {
             var serialized = new SerializedObject(ui);
             CheckReference(report, serialized, "mainMenuCanvas", "主菜单 Canvas", "MainMenu");
+            CheckReference(report, serialized, "topCanvas", "顶层画布", "TopCanvas");
             CheckReference(report, serialized, "settingsPanel", "设置面板", "SettingPanel");
             CheckReference(report, serialized, "startButton", "开始游戏按钮", "Start");
             CheckReference(report, serialized, "settingsButton", "设置按钮", "Setting");
             CheckReference(report, serialized, "exitButton", "退出游戏按钮", "Exit");
             CheckReference(report, serialized, "fullScreenButton", "全屏按钮", "FullScreen");
             CheckReference(report, serialized, "closeSettingsButton", "关闭设置按钮", "CloseSetting");
+            CheckReference(report, serialized, "inputButton", "键位调整按钮", "Input");
+            CheckReference(report, serialized, "keyBindingPanel", "键位调整面板", "KeyBindingPanel（运行时自动搭）");
             CheckReference(report, serialized, "fullScreenLabel", "全屏按钮文字", "FullScreen/Label");
             CheckReference(report, serialized, "volumeSlider", "音量滑条", "AudioSlider");
+            CheckReference(report, serialized, "battleCanvas", "战斗画布", "battleCanvas / BattleGround");
+            CheckReference(report, serialized, "battleHud", "战斗 HUD", "BattleHud");
         }
 
         private static void CheckReference(

@@ -16,7 +16,8 @@ namespace Ring.Flow
     }
 
     /// <summary>
-    /// 角色运动体：四向移动、2 格跳跃、空中可移动、闪避无敌帧、击退/强制拉回与墙体碰撞。
+    /// 角色运动体：横版地面左右移动（可关掉地面锁定恢复四向）、2 格跳跃、闪避无敌帧、
+    /// 击退/强制拉回与墙体碰撞。跳跃是 <c>JumpOffset</c> 的视觉高度，不改变根节点在地面线上的位置。
     /// 只依赖 CharacterInstance 的派生数值与 Combat 状态，玩家和 AI 都可以挂。
     /// </summary>
     [DisallowMultipleComponent]
@@ -31,6 +32,20 @@ namespace Ring.Flow
         [SerializeField] private float arenaRadius = 6.5f;
         [SerializeField] private float bodyRadius = 0.3f;
         [SerializeField] private CombatWallDefinition[] walls = Array.Empty<CombatWallDefinition>();
+
+        [Header("矩形场地（25×12 横版地图）")]
+        [Tooltip("开：用轴对齐矩形约束（左右边界）。是否允许竖向移动由下面的「地面锁定」决定。关：沿用旧的圆形约束。")]
+        [SerializeField] private bool useRectArena = true;
+        [Tooltip("矩形可玩区左下角（世界坐标）。由 MatchSpawner 按当前地图写入。")]
+        [SerializeField] private Vector2 arenaRectMin = new Vector2(-6.5f, -6.5f);
+        [Tooltip("矩形可玩区右上角（世界坐标）。由 MatchSpawner 按当前地图写入。")]
+        [SerializeField] private Vector2 arenaRectMax = new Vector2(6.5f, 6.5f);
+
+        [Header("地面锁定（横版左右移动）")]
+        [Tooltip("开：角色只能沿地面左右移动，Y 恒等于地面线；跳跃只走 JumpOffset 的视觉偏移，不改变根节点高度。关：恢复四向自由移动。")]
+        [SerializeField] private bool lockToGround = true;
+        [Tooltip("地面线世界 Y（角色脚底）。由 MatchSpawner 按当前地图的地面顶面写入；未写入时取角色出生高度。")]
+        [SerializeField] private float groundLineY;
 
         [Header("动作")]
         [SerializeField] private bool enableDodge = true;
@@ -88,6 +103,9 @@ namespace Ring.Flow
         private void Awake()
         {
             instance = GetComponent<CharacterInstance>();
+            // 地面锁定默认开启：先把出生高度当成地面线，避免开局第一帧被拉到 y=0。
+            // 真正的落位由 MatchSpawner 用当前地图的 GroundSurfaceY 覆盖。
+            groundLineY = transform.position.y;
             RebuildWalls();
         }
 
@@ -143,10 +161,12 @@ namespace Ring.Flow
                 }
             }
 
-            if (delta.SqrMagnitude > 0f)
+            // 地面锁定时即使本帧没有任何位移输入，也要解算一次：
+            // 这样 Teleport / 拉回 / 落位把角色放到别的高度后，会被立刻压回地面线，
+            // 不会出现「站着的位置比地面高一截、要按一下方向键才掉回去」。
+            if (lockToGround || delta.SqrMagnitude > 0f)
             {
-                position = MotionSolver.Move(position, delta, Math.Max(0.01f, bodyRadius), wallList,
-                    clampToArena, ToVec2(arenaCenter), arenaRadius);
+                position = SolveMotion(position, delta);
                 transform.position = new Vector3(position.X, position.Y, transform.position.z);
             }
 
@@ -243,7 +263,61 @@ namespace Ring.Flow
             clampToArena = clamp;
             arenaRadius = Mathf.Max(0f, radius);
             unitsPerCell = units > 0f ? units : 1f;
+            // 调用圆形配置即明确切回圆形约束；矩形配置请用 ConfigureArenaRect。
+            useRectArena = false;
         }
+
+        /// <summary>
+        /// 把场地约束切成「轴对齐矩形」，供 25×12 横版地图落位层调用。
+        /// 只定义**左右**可走区间；竖向是否可走由 <see cref="lockToGround"/> 决定：
+        /// 开着就锁在地面线上左右移动，关掉才是四向自由移动（旧口径）。
+        /// </summary>
+        /// <param name="min">矩形左下角（世界坐标，未内缩角色半径）。</param>
+        /// <param name="max">矩形右上角（世界坐标，未内缩角色半径）。</param>
+        /// <param name="units">一格对应的世界单位。</param>
+        public void ConfigureArenaRect(Vector2 min, Vector2 max, float units)
+        {
+            ConfigureArenaRect(min, max, units, Mathf.Min(min.y, max.y));
+        }
+
+        /// <summary>
+        /// 矩形场地 + 显式地面线。地面锁定时角色只会在这条线上左右移动。
+        /// </summary>
+        /// <param name="groundY">角色脚底所在的地面线世界 Y（由 MatchSpawner 按地图 GroundSurfaceY 给）。</param>
+        public void ConfigureArenaRect(Vector2 min, Vector2 max, float units, float groundY)
+        {
+            useRectArena = true;
+            arenaRectMin = new Vector2(Mathf.Min(min.x, max.x), Mathf.Min(min.y, max.y));
+            arenaRectMax = new Vector2(Mathf.Max(min.x, max.x), Mathf.Max(min.y, max.y));
+            arenaCenter = (arenaRectMin + arenaRectMax) * 0.5f;
+            arenaRadius = Mathf.Max(0f,
+                Mathf.Min(arenaRectMax.x - arenaRectMin.x, arenaRectMax.y - arenaRectMin.y) * 0.5f);
+            clampToArena = true;
+            unitsPerCell = units > 0f ? units : 1f;
+            groundLineY = groundY;
+        }
+
+        /// <summary>运行时切换「只能沿地面左右移动」。</summary>
+        public void SetGroundLock(bool enabled, float groundY)
+        {
+            lockToGround = enabled;
+            groundLineY = groundY;
+        }
+
+        /// <summary>只改地面线高度（切地图 / 换视口后重摆时用）。</summary>
+        public void SetGroundLine(float groundY)
+        {
+            groundLineY = groundY;
+        }
+
+        /// <summary>当前是否只能沿地面左右移动。</summary>
+        public bool IsGroundLocked => lockToGround;
+
+        /// <summary>当前地面线的世界 Y（角色脚底）。</summary>
+        public float GroundLineY => groundLineY;
+
+        /// <summary>当前是否使用矩形场地约束（自检 / 编辑器工具用）。</summary>
+        public bool UsesRectArena => useRectArena;
 
         public void SetActionEnabled(bool dodgeEnabled, bool jumpEnabled)
         {
@@ -439,11 +513,35 @@ namespace Ring.Flow
             }
 
             Vec2 delta = direction.Normalized * (cells * unitsPerCell);
-            position = MotionSolver.Move(position, delta, Math.Max(0.01f, bodyRadius), wallList,
-                clampToArena, ToVec2(arenaCenter), arenaRadius);
+            position = SolveMotion(position, delta);
             transform.position = new Vector3(position.X, position.Y, transform.position.z);
             SetFacing(direction);
             return position;
+        }
+
+        /// <summary>
+        /// 按当前场地形状求解位移：
+        /// - <see cref="lockToGround"/> 开：横版地面锁定，只解算 X，Y 恒等于地面线（跳跃是视觉偏移）；
+        /// - 否则矩形给 25×12 地图（四向），圆形留给旧逻辑。
+        /// 三条路径都走同一个 <see cref="MotionSolver"/> 的墙体阻挡，不会出现「某种模式会穿墙」。
+        /// </summary>
+        private Vec2 SolveMotion(Vec2 position, Vec2 delta)
+        {
+            float radius = Math.Max(0.01f, bodyRadius);
+            if (lockToGround)
+            {
+                return MotionSolver.MoveGround(position, delta, radius, wallList,
+                    arenaRectMin.x, arenaRectMax.x, groundLineY);
+            }
+
+            if (useRectArena)
+            {
+                return MotionSolver.MoveRect(position, delta, radius, wallList,
+                    ToVec2(arenaRectMin), ToVec2(arenaRectMax));
+            }
+
+            return MotionSolver.Move(position, delta, radius, wallList,
+                clampToArena, ToVec2(arenaCenter), arenaRadius);
         }
 
         private void UpdateJump(float deltaTime)

@@ -151,8 +151,8 @@ namespace MapKitTest
         void Update()
         {
             if (cfg == null) return;
-            float dark = cfg.bamboo.darknessAlpha, lit = 0.13f;
-            float light = Mathf.Clamp01(Mathf.InverseLerp(dark, lit, coverAlpha));
+            float dark = cfg.bamboo.darknessAlpha;
+            float light = Mathf.Clamp01(Mathf.InverseLerp(dark, CoverAlphaLit, coverAlpha));
             float a = Mathf.Lerp(RainAlphaDark, RainAlphaLit, light);
             if (rainMat != null) rainMat.color = new Color(1f, 1f, 1f, a);
             if (splashMat != null) splashMat.color = new Color(1f, 1f, 1f, a);
@@ -166,7 +166,11 @@ namespace MapKitTest
                 Strike(false);
                 if (Random.value < cfg.bamboo.extraChance)
                 {
-                    yield return new WaitForSeconds(Random.Range(0f, cfg.bamboo.extraCheckEvery));
+                    // 追加雷至少等上一发闪完（0.9×flashSeconds）再落，
+                    // 否则 0~extraCheckEvery 的随机区间会把两次闪叠成一团密集频闪。
+                    float gap = Mathf.Max(cfg.bamboo.flashSeconds * 0.9f,
+                        Random.Range(0f, cfg.bamboo.extraCheckEvery));
+                    yield return new WaitForSeconds(gap);
                     Strike(false);
                 }
             }
@@ -247,7 +251,8 @@ namespace MapKitTest
             lr.endWidth = width * 0.4f;
             lr.material = new Material(Shader.Find("Sprites/Default"));
             lr.sortingOrder = 102;
-            Destroy(go, 0.22f);   // 闪电短暂显示后销毁，跟随黑幕闪烁
+            // 存活时间跟住一次完整闪光（含第二次亮），否则闪到第二下时闪电已经消失
+            Destroy(go, Mathf.Max(0.2f, cfg.bamboo.flashSeconds * 0.78f));
         }
 
         IEnumerator GroundFlash(float x, Color col)
@@ -271,29 +276,41 @@ namespace MapKitTest
             Destroy(go);
         }
 
+        // 黑幕「打亮」时的透明度；Update() 用它反推雨的亮度，两处必须同源
+        const float CoverAlphaLit = 0.13f;
+
         IEnumerator FlashAndHide()
         {
-            // 亮 0.05s → 暗 0.04s → 再亮，然后 0.16s 淡回黑（总计 ~flashSeconds）
+            // 2026-11-28 放慢：旧版硬编码「亮 0.05s → 暗 0.04s → 亮 0.05s」，
+            // 50/40ms 的白黑对切是最刺眼的频闪来源，而且不随 flashSeconds 变化。
+            // 现在四个阶段全部按 flashSeconds 比例分配，只要调配置就能整体减速。
             float dark = cfg.bamboo.darknessAlpha;
-            float lit = 0.13f;
-            SetRainAlpha(0.5f);
-            coverAlpha = lit; ApplyCover(); yield return new WaitForSeconds(0.05f);
-            coverAlpha = dark * 0.9f; ApplyCover(); yield return new WaitForSeconds(0.04f);
-            coverAlpha = lit; ApplyCover(); yield return new WaitForSeconds(0.05f);
-            float t = 0f, fade = Mathf.Max(0.05f, cfg.bamboo.flashSeconds - 0.14f);
+            float total = Mathf.Max(0.2f, cfg.bamboo.flashSeconds);
+
+            float lit1 = total * 0.20f;   // 第一次亮
+            float dim = total * 0.17f;   // 中间回落（不到全黑，避免硬对切）
+            float lit2 = total * 0.20f;   // 第二次亮
+            float fade = Mathf.Max(0.05f, total - lit1 - dim - lit2);
+
+            coverAlpha = CoverAlphaLit; ApplyCover();
+            yield return new WaitForSeconds(lit1);
+
+            coverAlpha = Mathf.Lerp(CoverAlphaLit, dark, 0.55f); ApplyCover();
+            yield return new WaitForSeconds(dim);
+
+            coverAlpha = CoverAlphaLit; ApplyCover();
+            yield return new WaitForSeconds(lit2);
+
+            float t = 0f;
             while (t < fade)
             {
                 t += Time.deltaTime;
-                coverAlpha = Mathf.Lerp(lit, dark, t / fade);
+                coverAlpha = Mathf.Lerp(CoverAlphaLit, dark, t / fade);
                 ApplyCover();
                 yield return null;
             }
             coverAlpha = dark; ApplyCover();
-            SetRainAlpha(0.03f);
         }
-
-        // 雨的透明度改由 Update() 按黑幕亮度统一控制，这里保留空方法以兼容旧调用
-        void SetRainAlpha(float a) { }
 
         void ApplyCover()
         {

@@ -305,7 +305,9 @@ namespace Ring.Flow
                 PlayerMotor motor = Player.GetComponent<PlayerMotor>();
                 if (motor != null)
                 {
-                    motor.SetArenaCenter(new Vector2(stage.Center.x, stage.PlayableCenterY));
+                    // 矩形模式下这个字段不参与约束（SolveMotion 读的是 arenaRectMin/Max），
+                    // 这里只保持中心信息与场地一致，供 Inspector 自检与旧逻辑兜底。
+                    motor.SetArenaCenter(stage.Center);
                 }
             }
 
@@ -399,9 +401,10 @@ namespace Ring.Flow
                 return;
             }
 
-            // 圆的最低点 = 地面上沿、最高点 = 背景顶边：角色既不会陷进地面，也不会走出画面。
-            character.Body.ConfigureArena(
-                new Vector2(stage.Center.x, stage.PlayableCenterY), true, stage.PlayableRadius, stage.CellSize);
+            // 横版地面口径：左右可走区间取地图矩形，竖向锁定在地面顶面（+ 视觉余量）。
+            // 角色只能在地面左右移动，跳跃由 CombatBody 的 JumpOffset 视觉偏移表现。
+            character.Body.ConfigureArenaRect(stage.PlayableRectMin, stage.PlayableRectMax, stage.CellSize,
+                stage.GroundSurfaceY + groundClearance);
 
             if (syncCellScale)
             {
@@ -421,7 +424,9 @@ namespace Ring.Flow
                 return;
             }
 
-            character.Body.ConfigureArena(new Vector2(center.x, center.y), true, radius, cellSize);
+            character.Body.ConfigureArenaRect(
+                new Vector2(center.x - radius, center.y - radius),
+                new Vector2(center.x + radius, center.y + radius), cellSize, center.y);
         }
 
         /// <summary>把格距同步给输入选点与所有角色（运动体 / 技能 / 玩家适配层）。</summary>
@@ -564,7 +569,9 @@ namespace Ring.Flow
             CharacterInstance character = FindById(participantId);
             if (character != null && character.Body != null)
             {
-                character.Body.ConfigureArena(new Vector2(center.x, center.y), true, 6.5f, 1f);
+                character.Body.ConfigureArenaRect(
+                    new Vector2(center.x - 6.5f, center.y - 6.5f),
+                    new Vector2(center.x + 6.5f, center.y + 6.5f), 1f, center.y);
             }
         }
 

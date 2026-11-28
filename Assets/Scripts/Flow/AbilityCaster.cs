@@ -403,6 +403,13 @@ namespace Ring.Flow
 
         private void SpawnProjectiles(AbilityDefinition definition, AbilitySlot slot)
         {
+            // 防御性兜底：普攻任何情况下都不允许生成飞行物（见 ResolveBasicAttack 顶部说明）。
+            // 技能槽的弹道（投矛 / 破甲重箭 / 时钟飞刃）仍然走这里。
+            if (slot == AbilitySlot.BasicAttack)
+            {
+                return;
+            }
+
             Vec2 origin = ToVec2(transform.position);
             Vec2 direction = GetAimDirection();
             float width = definition.AreaWidthCells > 0f ? definition.AreaWidthCells : 0.5f;
@@ -971,8 +978,9 @@ namespace Ring.Flow
                 return false;
             }
 
-            // 朝向在按下瞬间锁定：结算要等动画命中帧，届时鼠标可能已经移开。
-            Vec2 aimedDirection = GetAimDirection();
+            // 点击只负责「通知释放攻击」：挥砍方向沿用角色当前朝向（A/D 决定的左右），
+            // 鼠标在另一侧也不转身。结算要等动画命中帧，这里把方向锁在按下瞬间。
+            Vec2 aimedDirection = GetFacingDirection();
             System.Action resolve = () => ResolveBasicAttack(definition, aimedDirection);
 
             SwordsmanSpriteAnimation animation = SwordAnimation;
@@ -1012,13 +1020,10 @@ namespace Ring.Flow
                 return;
             }
 
-            if (definition.ProjectileSpeed > 0f &&
-                (definition.Shape == AbilityShape.Line || definition.Shape == AbilityShape.Fan))
-            {
-                SpawnProjectiles(definition, AbilitySlot.BasicAttack);
-                return;
-            }
-
+            // 平A 一律不生成飞行物（2026-11-28 策划确认：以前远距离人设的普攻会射出
+            // 一个白点/箭，判定方向还带竖直分量，看上去就是「发了个东西往斜上方飘」）。
+            // 现在改成「动画命中帧 + 沿朝向的瞬时判定」：伤害立刻落在目标身上，
+            // 场上不再残留任何独立弹道物体；技能槽的弹道（投矛/重箭/飞刃）保持不变。
             DerivedAbilityStats derived = instance.Derived;
             CharacterInstance target = FindBasicAttackTarget(definition, aimedDirection,
                 Mathf.Max(0.5f, derived.AttackRangeCells));
@@ -1033,7 +1038,19 @@ namespace Ring.Flow
             }
 
             BasicAttackHitResult hit = instance.NotifyBasicAttackHit(target.Id);
-            float damage = derived.BasicAttackDamage + hit.BonusDamage;
+
+            // 散弹类（蒸汽铳 4 枚 × 2）原本靠 4 条弹道各算一次；改成瞬时判定后，
+            // 多枚弹片在同一个锥形里必然一起命中，这里直接合并成一次结算，
+            // 否则派生伤害只有 PelletDamage（2 点），等于把散弹削成单发。
+            float damage = derived.BasicAttackDamage;
+            if (definition.Shape == AbilityShape.Fan
+                && definition.PelletCount > 1
+                && definition.PelletDamage > 0f)
+            {
+                damage = definition.PelletDamage * definition.PelletCount;
+            }
+
+            damage += hit.BonusDamage;
             Vec2 direction = (ToVec2(target.transform.position) - ToVec2(transform.position)).Normalized;
             DamageResult result = target.TakeDamage(new DamageRequest
             {
@@ -1134,7 +1151,11 @@ namespace Ring.Flow
             float rangeWorld)
         {
             HitShape shape = null;
-            if (definition.Shape == AbilityShape.Rect || definition.Shape == AbilityShape.Fan)
+            // 平A 不再有飞行物：远程人设（游侠短弓 / 钟表飞刃）也要按 Line 形状
+            // 沿朝向做一次瞬时判定，否则会退化成「身边最近的人」，箭打到背后。
+            if (definition.Shape == AbilityShape.Rect
+                || definition.Shape == AbilityShape.Line
+                || definition.Shape == AbilityShape.Fan)
             {
                 shape = HitShape.FromDefinition(definition);
             }
@@ -1206,20 +1227,45 @@ namespace Ring.Flow
         private Vec2 GetAimDirection()
         {
             Vec2 origin = ToVec2(transform.position);
+            Vec2 direction = body != null ? body.FacingVector : Vec2.Right;
+
             GameInput input = GameInput.Instance;
             if (input != null && input.HasValidAim)
             {
                 Vec2 aim = ToVec2(input.AimWorldPoint) - origin;
                 if (aim.SqrMagnitude > 0.001f)
                 {
-                    Vec2 direction = aim.Normalized;
-                    // 输入瞄准、命中判定与精灵水平翻转统一使用同一个方向。
-                    body?.SetFacing(direction);
-                    return direction;
+                    direction = aim.Normalized;
                 }
             }
 
-            return body != null ? body.FacingVector : Vec2.Right;
+            // 横版地面锁定（CombatBody.lockToGround）下角色只有左右两个朝向：
+            // 鼠标是投到 z=0 世界平面上的，角色站在地面线（比平面低 3~4 个单位）时，
+            // 这个方向天然带一大截竖直分量 —— 不压平的话技能会朝斜上方判定、
+            // 技能弹道也会「往斜上方飘」。这里按鼠标在左/右决定正负，Y 强制清零。
+            if (body != null && body.IsGroundLocked)
+            {
+                direction = new Vec2(direction.X >= 0f ? 1f : -1f, 0f);
+            }
+
+            // 输入瞄准、命中判定与精灵水平翻转统一使用同一个方向。
+            body?.SetFacing(direction);
+            return direction;
+        }
+
+        /// <summary>
+        /// 角色当前朝向（横版地面锁定下压成左右单位向量）。
+        /// 平A 只用它：点击是「通知释放攻击」，不参与左右朝向的决定。
+        /// </summary>
+        private Vec2 GetFacingDirection()
+        {
+            Vec2 direction = body != null ? body.FacingVector : Vec2.Right;
+            if (body != null && body.IsGroundLocked)
+            {
+                direction = new Vec2(direction.X >= 0f ? 1f : -1f, 0f);
+            }
+
+            return direction;
         }
 
         private bool HasAim()
